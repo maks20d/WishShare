@@ -1,0 +1,16 @@
+# Runtime and tooling versions for production-like deploys
+# - python-3.11.* is the target runtime for FastAPI app
+# - Poetry is optional (we use pip + requirements.txt in CI containers)
+python-3.11.8
+# poetry-1.8.3
+
+# Dependencies overview (pinned in requirements.txt):
+# - uvicorn[standard] 0.30.6 — ASGI сервер
+# - fastapi 0.115.x — веб‑фреймворк
+# - sqlalchemy[asyncio] 2.x — ORM и async работа с БД
+# - asyncpg 0.29.x — драйвер PostgreSQL
+# - aiosqlite — локальная SQLite для тестов/E2E
+# - pydantic 2.x — схемы и валидация
+# - httpx — HTTP‑клиент
+# - playwright 1.48.x — браузер для парсинга/тестов
+# Примечание: фактическая установка идёт из requirements.txt; этот файл фиксирует целевую версию рантайма.
