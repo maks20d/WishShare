@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 
 vi.mock("../../lib/api", () => ({
   api: {
@@ -22,7 +23,7 @@ describe("auth store", () => {
 
   it("restores session on fetchMe success", async () => {
     const user = { id: 1, email: "u@example.com", name: "User" };
-    (api.get as vi.Mock).mockResolvedValue(user);
+    (api.get as Mock).mockResolvedValue(user);
 
     await useAuthStore.getState().fetchMe();
 
@@ -33,7 +34,7 @@ describe("auth store", () => {
   it("clears session on 401/403", async () => {
     const err = new Error("Unauthorized") as ApiError;
     err.code = "UNAUTHORIZED";
-    (api.get as vi.Mock).mockRejectedValue(err);
+    (api.get as Mock).mockRejectedValue(err);
 
     await useAuthStore.getState().fetchMe();
 
@@ -42,7 +43,7 @@ describe("auth store", () => {
 
   it("propagates login errors while stopping loading", async () => {
     const err = new Error("Invalid") as ApiError;
-    (api.post as vi.Mock).mockRejectedValue(err);
+    (api.post as Mock).mockRejectedValue(err);
 
     await expect(useAuthStore.getState().login("x@y.com", "bad")).rejects.toThrow("Invalid");
     expect(useAuthStore.getState().loading).toBe(false);

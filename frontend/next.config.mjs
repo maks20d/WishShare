@@ -23,14 +23,19 @@ const nextConfig = {
     ],
   },
   async rewrites() {
+    const backendBase =
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
+      process.env.NEXT_PUBLIC_BACKEND_URL ||
+      process.env.BACKEND_URL ||
+      'http://localhost:8000';
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:8000'}/:path*`,
+        destination: `${backendBase}/:path*`,
       },
       {
         source: '/ws/:path*',
-        destination: `${process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:8000'}/ws/:path*`,
+        destination: `${backendBase}/ws/:path*`,
       },
     ];
   },

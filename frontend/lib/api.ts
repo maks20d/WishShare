@@ -14,9 +14,7 @@ function resolveApiBase(): string {
       return configured;
     }
 
-    if (isLocalDevHost(window.location.hostname)) {
-      return "http://localhost:8000";
-    }
+    return "/api";
   }
 
   return configured || "http://localhost:8000";
@@ -99,7 +97,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
           status: res.status,
           code: error.code,
           requestBody: error.requestBody,
-          responseBody
+          responseBody,
+          stack: error.stack
         });
 
         if (res.status >= 500 && attempt < MAX_RETRIES) {
@@ -140,7 +139,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         method,
         code: error.code,
         requestBody: error.requestBody,
-        error: error.message
+        error: error.message,
+        stack: error.stack
       });
 
       if (attempt < MAX_RETRIES) {

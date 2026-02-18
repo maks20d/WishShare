@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Database configuration
     # For development: sqlite+aiosqlite:///./wishshare.db
     # For production: postgresql+asyncpg://user:password@localhost/wishshare
-    postgres_dsn: str = "postgresql+asyncpg://wishshare:password@localhost:5432/wishshare"
+    postgres_dsn: str = "sqlite+aiosqlite:///./wishshare.db"
     
     # For PostgreSQL configuration, use:
     # postgres_user: str = "wishshare"

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.engine import make_url
 
 from app.api.routes import auth, og, wishlists, ws
 from app.core.config import settings
@@ -107,23 +108,46 @@ async def on_startup() -> None:
     except RuntimeError:
         logger.warning("No running event loop during startup")
 
+    try:
+        db_url = make_url(settings.postgres_dsn)
+        logger.info(
+            "DB config driver=%s host=%s database=%s",
+            db_url.get_backend_name(),
+            db_url.host,
+            db_url.database,
+        )
+    except Exception:
+        logger.warning("DB config parse failed", exc_info=True)
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        result = await conn.exec_driver_sql(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = 'wishlists' AND column_name = 'public_token'"
-        )
-        if result.first() is None:
+        is_sqlite = engine.dialect.name == "sqlite"
+        if is_sqlite:
             try:
-                await conn.exec_driver_sql(
-                    "ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)"
-                )
+                result = await conn.exec_driver_sql("PRAGMA table_info(wishlists)")
+                columns = {row[1] for row in result.fetchall()}
+                if "public_token" not in columns:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)"
+                    )
             except Exception:
-                logger.error("Failed to add wishlists.public_token", exc_info=True)
+                logger.error("Failed to ensure wishlists.public_token", exc_info=True)
+        else:
             result = await conn.exec_driver_sql(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'wishlists' AND column_name = 'public_token'"
             )
             if result.first() is None:
-                raise RuntimeError("Missing column wishlists.public_token")
+                try:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)"
+                    )
+                except Exception:
+                    logger.error("Failed to add wishlists.public_token", exc_info=True)
+                result = await conn.exec_driver_sql(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = 'wishlists' AND column_name = 'public_token'"
+                )
+                if result.first() is None:
+                    raise RuntimeError("Missing column wishlists.public_token")
         try:
             await conn.exec_driver_sql(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_wishlists_public_token ON wishlists(public_token)"

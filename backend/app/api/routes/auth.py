@@ -2,9 +2,11 @@ from urllib.parse import urlencode
 import secrets
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response, status
+import logging
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import DbSessionDep, get_current_user
 from app.core.mailer import send_email_verification_email, send_password_reset_email
@@ -31,6 +33,7 @@ from app.schemas.auth import (
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger("wishshare")
 
 
 def _cookie_options() -> dict[str, object]:
@@ -147,15 +150,56 @@ async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPubli
 
 
 @router.post("/login", response_model=UserPublic)
-async def login_user(payload: LoginRequest, response: Response, db: DbSessionDep) -> UserPublic:
-    result = await db.execute(select(User).where(User.email == payload.email))
-    user = result.scalar_one_or_none()
+async def login_user(
+    payload: LoginRequest,
+    response: Response,
+    db: DbSessionDep,
+    request: Request,
+) -> UserPublic:
+    request_id = request.headers.get("X-Request-Id")
+    client_host = request.client.host if request.client else None
+    logger.info(
+        "Auth login request id=%s email=%s ip=%s ua=%s",
+        request_id,
+        payload.email,
+        client_host,
+        request.headers.get("user-agent"),
+    )
+    try:
+        result = await db.execute(select(User).where(User.email == payload.email))
+        user = result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception(
+            "Auth login db error id=%s email=%s ip=%s",
+            request_id,
+            payload.email,
+            client_host,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable",
+        )
+
     if not user:
+        logger.info("Auth login user not found id=%s email=%s", request_id, payload.email)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь не найден. Зарегистрируйтесь.",
         )
-    if not verify_password(payload.password, user.hashed_password):
+    try:
+        password_ok = verify_password(payload.password, user.hashed_password)
+    except Exception:
+        logger.exception(
+            "Auth login verify failed id=%s user_id=%s",
+            request_id,
+            user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+    if not password_ok:
+        logger.info("Auth login invalid password id=%s user_id=%s", request_id, user.id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Неверный пароль.",
@@ -168,6 +212,7 @@ async def login_user(payload: LoginRequest, response: Response, db: DbSessionDep
         httponly=True,
         **_cookie_options(),
     )
+    logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
 
 

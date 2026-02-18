@@ -99,6 +99,7 @@ export function connectWishlistWs(
   let isActive = true;
   let currentSocket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let shouldCloseOnOpen = false;
 
   const connect = () => {
     if (!isActive) {
@@ -108,6 +109,12 @@ export function connectWishlistWs(
     const normalizedSlug = normalizeSlug(slug);
     const socket = new WebSocket(`${WS_BASE}/${encodeURIComponent(normalizedSlug)}`);
     currentSocket = socket;
+
+    socket.onopen = () => {
+      if (!isActive || shouldCloseOnOpen) {
+        socket.close();
+      }
+    };
 
     socket.onmessage = (event) => {
       try {
@@ -140,11 +147,17 @@ export function connectWishlistWs(
 
   return () => {
     isActive = false;
+    shouldCloseOnOpen = true;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
     }
     if (currentSocket) {
-      currentSocket.close();
+      if (
+        currentSocket.readyState === WebSocket.OPEN ||
+        currentSocket.readyState === WebSocket.CLOSING
+      ) {
+        currentSocket.close();
+      }
       currentSocket = null;
     }
   };
