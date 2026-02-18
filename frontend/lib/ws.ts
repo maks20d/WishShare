@@ -4,7 +4,7 @@ function isLocalDevHost(hostname: string): boolean {
 
 function resolveWsBase(): string {
   const configured = process.env.NEXT_PUBLIC_WS_BASE_URL;
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
 
   if (typeof window !== "undefined") {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -80,6 +80,10 @@ function normalizeSlug(value: string): string {
 }
 
 const WS_BASE = resolveWsBase();
+import { logger } from "./logger";
+if (process.env.NODE_ENV !== "production") {
+  logger.info("WS base URL resolved", { base: WS_BASE });
+}
 
 export type WishlistWsMessage = {
   type: string;

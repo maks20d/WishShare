@@ -3,7 +3,8 @@ function isLocalDevHost(hostname: string): boolean {
 }
 
 function resolveApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const configured =
+    process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
 
   if (typeof window !== "undefined") {
     const runtimeHost = window.location.hostname;
@@ -33,6 +34,10 @@ function resolveApiBase(): string {
 }
 
 const API_BASE = resolveApiBase();
+import { logger } from "./logger";
+if (process.env.NODE_ENV !== "production") {
+  logger.info("API base URL resolved", { base: API_BASE });
+}
 
 export type ApiError = Error & {
   status?: number;
@@ -42,8 +47,6 @@ export type ApiError = Error & {
   requestBody?: unknown;
   responseBody?: unknown;
 };
-
-import { logger } from "./logger";
 
 const RETRY_BASE_MS = 300;
 const MAX_RETRIES = 2;
