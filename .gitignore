@@ -45,6 +45,10 @@ dist/
 *.tmp
 *.bak
 
+# Overrides: track frontend library sources
+!frontend/lib/
+!frontend/lib/**
+
 # Environment
 .env
 .env.*
