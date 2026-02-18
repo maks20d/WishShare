@@ -76,3 +76,38 @@ def send_email_verification_email(to_email: str, verify_link: str) -> None:
             if settings.smtp_username:
                 server.login(settings.smtp_username, settings.smtp_password)
             server.send_message(message)
+
+
+def send_unavailable_gift_notice(to_email: str, wishlist_title: str, gift_title: str) -> None:
+    subject = "WishShare: товар стал недоступен"
+    body = (
+        f"В вашем вишлисте '{wishlist_title}' товар '{gift_title}' стал недоступен.\n\n"
+        "Замените его альтернативой или обновите ссылку на товар."
+    )
+
+    if not settings.smtp_host:
+        logger.info(
+            "SMTP not configured. Unavailable gift notice for %s: %s — %s",
+            to_email,
+            wishlist_title,
+            gift_title,
+        )
+        return
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = settings.smtp_from_email
+    message["To"] = to_email
+    message.set_content(body)
+
+    if settings.smtp_use_tls:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+            server.starttls()
+            if settings.smtp_username:
+                server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+            if settings.smtp_username:
+                server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(message)

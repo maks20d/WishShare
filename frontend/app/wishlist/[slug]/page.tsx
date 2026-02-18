@@ -50,6 +50,7 @@ type Wishlist = {
   privacy?: "link_only" | "friends" | "public";
   owner_id: number;
   gifts: Gift[];
+  public_token?: string | null;
 };
 
 type OgPreviewResponse = {
@@ -193,7 +194,11 @@ export default function WishlistPage() {
   }, [wishlist]);
 
   const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/wishlist/${slug}`);
+    const publicUrl =
+      wishlist?.public_token
+        ? `${window.location.origin}/w/${wishlist.public_token}`
+        : `${window.location.origin}/wishlist/${slug}`;
+    await navigator.clipboard.writeText(publicUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -411,9 +416,21 @@ export default function WishlistPage() {
               )}
             </div>
             {isOwner && (
-              <button onClick={handleCopyLink} className="btn-ghost text-sm md:text-base">
-                {copied ? "Ссылка скопирована" : "Поделиться ссылкой"}
-              </button>
+              <div className="flex flex-col items-end gap-3">
+                <button onClick={handleCopyLink} className="btn-ghost text-sm md:text-base">
+                  {copied ? "Ссылка скопирована" : "Поделиться ссылкой"}
+                </button>
+                {wishlist.public_token ? (
+                  <Image
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(`${typeof window !== "undefined" ? window.location.origin : ""}/w/${wishlist.public_token}`)}`}
+                    width={140}
+                    height={140}
+                    alt="QR код публичной ссылки"
+                    className="rounded"
+                    unoptimized
+                  />
+                ) : null}
+              </div>
             )}
           </div>
 

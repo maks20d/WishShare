@@ -121,6 +121,8 @@ class GiftPublic(BaseModel):
     total_contributions: float
     collected_percent: float
     is_fully_collected: bool
+    is_unavailable: bool = False
+    unavailable_reason: str | None = None
 
     class Config:
         from_attributes = True
@@ -138,6 +140,7 @@ class WishlistPublic(BaseModel):
     owner_id: int
     gifts: list[GiftPublic]
     access_emails: list[str] = []
+    public_token: str | None = None
 
     class Config:
         from_attributes = True

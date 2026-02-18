@@ -5,7 +5,7 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, In
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
-
+from uuid import uuid4
 
 class User(Base):
     __tablename__ = "users"
@@ -46,6 +46,7 @@ class Wishlist(Base):
     privacy: Mapped[str] = mapped_column(String(20), default=PrivacyLevelEnum.LINK_ONLY.value)
     is_secret_santa: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    public_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid4()))
 
     owner: Mapped[User] = relationship(back_populates="wishlists")
     gifts: Mapped[list["Gift"]] = relationship(back_populates="wishlist", cascade="all, delete-orphan")
@@ -66,6 +67,8 @@ class Gift(Base):
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     is_collective: Mapped[bool] = mapped_column(Boolean, default=False)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_unavailable: Mapped[bool] = mapped_column(Boolean, default=False)
+    unavailable_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     wishlist: Mapped[Wishlist] = relationship(back_populates="gifts")
@@ -116,4 +119,32 @@ class Contribution(Base):
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_contributions_amount_positive"),
+    )
+
+
+class WishlistItemArchive(Base):
+    __tablename__ = "wishlist_items_archive"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    wishlist_id: Mapped[int] = mapped_column(ForeignKey("wishlists.id"), index=True)
+    gift_id: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    last_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class WishlistDonation(Base):
+    __tablename__ = "wishlist_donations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    wishlist_id: Mapped[int] = mapped_column(ForeignKey("wishlists.id"), index=True)
+    gift_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_wishlist_donations_amount_positive"),
     )

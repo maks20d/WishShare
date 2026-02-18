@@ -108,6 +108,76 @@ async def on_startup() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # lightweight, idempotent migration for public_token
+        try:
+            await conn.exec_driver_sql("ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)")
+        except Exception:
+            # column may already exist or ALTER not supported; ignore
+            pass
+        # ensure unique index (best-effort)
+        try:
+            await conn.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_wishlists_public_token ON wishlists(public_token)"
+            )
+        except Exception:
+            pass
+        # backfill tokens where missing
+        try:
+            result = await conn.exec_driver_sql("SELECT id FROM wishlists WHERE public_token IS NULL OR public_token = ''")
+            rows = result.fetchall()
+            for (wid,) in rows:
+                await conn.exec_driver_sql(
+                    "UPDATE wishlists SET public_token = :token WHERE id = :id",
+                    {"token": str(uuid4()), "id": wid},
+                )
+        except Exception:
+            logger.warning("Failed to backfill public_token values", exc_info=True)
+
+        # gifts: add unavailability columns (best-effort)
+        try:
+            await conn.exec_driver_sql("ALTER TABLE gifts ADD COLUMN is_unavailable BOOLEAN DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            await conn.exec_driver_sql("ALTER TABLE gifts ADD COLUMN unavailable_reason VARCHAR(255)")
+        except Exception:
+            pass
+
+        # archive table (best-effort)
+        try:
+            await conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS wishlist_items_archive (
+                    id SERIAL PRIMARY KEY,
+                    wishlist_id INTEGER REFERENCES wishlists(id),
+                    gift_id INTEGER,
+                    title VARCHAR(255) NOT NULL,
+                    image_url VARCHAR(2048),
+                    last_price NUMERIC(12,2),
+                    reason VARCHAR(255),
+                    archived_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+        except Exception:
+            pass
+
+        # donation ledger (best-effort)
+        try:
+            await conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS wishlist_donations (
+                    id SERIAL PRIMARY KEY,
+                    wishlist_id INTEGER REFERENCES wishlists(id),
+                    gift_id INTEGER,
+                    user_id INTEGER REFERENCES users(id),
+                    amount NUMERIC(12,2) NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+        except Exception:
+            pass
 
 
 @app.exception_handler(Exception)

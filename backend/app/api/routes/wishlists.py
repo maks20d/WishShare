@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import DbSessionDep, get_current_user, get_optional_user
 from app.models.models import Contribution, Gift, Reservation, User, Wishlist, WishlistAccessEmail
 from app.realtime.manager import manager
+from uuid import uuid4
 from app.schemas.wishlist import (
     ContributionCreate,
     GiftBase,
@@ -64,6 +65,8 @@ def _serialize_gift(
             total_contributions=float(total_contributions),
             collected_percent=collected_percent,
             is_fully_collected=is_fully_collected,
+            is_unavailable=getattr(gift, "is_unavailable", False),
+            unavailable_reason=getattr(gift, "unavailable_reason", None),
         )
 
     reservation_public = None
@@ -117,6 +120,8 @@ def _serialize_gift(
         total_contributions=float(total_contributions),
         collected_percent=collected_percent,
         is_fully_collected=is_fully_collected,
+        is_unavailable=getattr(gift, "is_unavailable", False),
+        unavailable_reason=getattr(gift, "unavailable_reason", None),
     )
 
 
@@ -220,6 +225,7 @@ async def _load_wishlist_with_gifts(
         owner_id=wishlist.owner_id,
         gifts=gift_public_list,
         access_emails=access_emails,
+        public_token=wishlist.public_token if viewer_role == "owner" else None,
     )
 
 
@@ -339,6 +345,7 @@ async def create_wishlist(
         is_secret_santa=payload.is_secret_santa,
         slug=slug,
         created_at=datetime.utcnow(),
+        public_token=str(uuid4()),
     )
     normalized_emails = _normalize_access_emails(payload.access_emails)
     if normalized_emails:
@@ -349,6 +356,41 @@ async def create_wishlist(
     await db.commit()
     await db.refresh(wishlist)
     return await _load_wishlist_with_gifts(db, wishlist, current_user)
+
+
+@router.get("/token/{token}", response_model=WishlistPublic)
+async def get_wishlist_by_token(
+    token: str,
+    db: DbSessionDep,
+    response: Response,
+) -> WishlistPublic:
+    result = await db.execute(select(Wishlist).where(Wishlist.public_token == token))
+    wishlist = result.scalar_one_or_none()
+    if not wishlist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
+
+    if wishlist.privacy not in ("public", "link_only"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return await _load_wishlist_with_gifts(db, wishlist, None)
+
+
+@router.post("/{slug}/rotate-token")
+async def rotate_public_token(
+    slug: str,
+    db: DbSessionDep,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    wishlist = result.scalar_one_or_none()
+    if not wishlist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
+    if wishlist.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only owner can rotate token")
+    wishlist.public_token = str(uuid4())
+    await db.commit()
+    await db.refresh(wishlist)
+    return {"public_token": wishlist.public_token}
 
 
 @router.get("/{slug}", response_model=WishlistPublic)
@@ -631,6 +673,18 @@ async def contribute_to_gift(
         amount=payload.amount,
     )
     db.add(contribution)
+    # append-only donation ledger (best-effort)
+    try:
+        from app.models.models import WishlistDonation
+        donation = WishlistDonation(
+            wishlist_id=gift.wishlist_id,
+            gift_id=gift.id,
+            user_id=current_user.id,
+            amount=payload.amount,
+        )
+        db.add(donation)
+    except Exception:
+        pass
     await db.commit()
     await db.refresh(gift, attribute_names=["reservation", "contributions", "wishlist"])
 
@@ -776,16 +830,44 @@ async def delete_gift(
             detail="Cannot delete gift with active contributions",
         )
 
-    slug = gift.wishlist.slug
-    await db.delete(gift)
+    from app.models.models import WishlistItemArchive
+    gift.is_unavailable = True
+    gift.unavailable_reason = "Этот товар был удален из каталога"
+    archive = WishlistItemArchive(
+        wishlist_id=gift.wishlist_id,
+        gift_id=gift.id,
+        title=gift.title,
+        image_url=gift.image_url,
+        last_price=gift.price,
+        reason=gift.unavailable_reason,
+    )
+    db.add(archive)
     await db.commit()
 
+    try:
+        from app.core.mailer import send_unavailable_gift_notice
+        owner_result = await db.execute(select(User).where(User.id == gift.wishlist.owner_id))
+        owner = owner_result.scalar_one_or_none()
+        if owner and owner.email:
+            send_unavailable_gift_notice(owner.email, gift.wishlist.title, gift.title)
+    except Exception:
+        pass
+
+    contributions_total_result = await db.execute(
+        select(func.coalesce(func.sum(Contribution.amount), 0)).where(Contribution.gift_id == gift.id)
+    )
+    total_contributions = float(contributions_total_result.scalar_one())
+
+    owner_view = _serialize_gift(gift, total_contributions=total_contributions, viewer_role="owner")
+    friend_view = _serialize_gift(gift, total_contributions=total_contributions, viewer_role="friend")
+    public_view = _serialize_gift(gift, total_contributions=total_contributions, viewer_role="public")
+
     await manager.broadcast_gift_event(
-        slug,
-        event_type="gift_deleted",
-        payload_for_owner={"id": gift_id},
-        payload_for_friend={"id": gift_id},
-        payload_for_public={"id": gift_id},
+        gift.wishlist.slug,
+        event_type="gift_archived",
+        payload_for_owner=_ws_gift_payload(gift, owner_view, "owner"),
+        payload_for_friend=_ws_gift_payload(gift, friend_view, "friend"),
+        payload_for_public=_ws_gift_payload(gift, public_view, "public"),
     )
 
 
