@@ -3,20 +3,47 @@ function isLocalDevHost(hostname: string): boolean {
 }
 
 function resolveWsBase(): string {
-  const configured = process.env.NEXT_PUBLIC_WS_BASE_URL;
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+  const configured = (process.env.NEXT_PUBLIC_WS_BASE_URL || "").trim();
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
+
+  // Отдаём приоритет явной конфигурации: позволяет обходить ограничения прокси (например, Vercel не проксирует WS Upgrade).
+  if (configured) {
+    try {
+      const url = new URL(configured.replace(/^ws:/, "http:").replace(/^wss:/, "https:"));
+      const wsProtocol = url.protocol === "https:" ? "wss:" : "ws:";
+      const base = `${wsProtocol}//${url.host}${url.pathname}`;
+      return base.endsWith("/ws") ? base : `${base}/ws`;
+    } catch {
+      // Если задан относительный путь, используем как is (например, "/ws")
+      return configured;
+    }
+  }
 
   if (typeof window !== "undefined") {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const runtimeHost = window.location.hostname;
     const runtimePort = window.location.port;
     const localHost = isLocalDevHost(runtimeHost);
-    const isFrontendDevPort = runtimePort === "3000" || runtimePort === "3001" || runtimePort === "5173";
+    const isFrontendDevPort =
+      runtimePort === "3000" || runtimePort === "3001" || runtimePort === "5173";
 
-    // В браузере используем same-origin WS (/ws) через rewrites, чтобы куки/сессии работали корректно
+    // Локальная разработка: стучимся напрямую на бекенд порт 8000
     if (localHost && isFrontendDevPort) {
       return `${protocol}//${runtimeHost}:8000/ws`;
     }
+
+    // Прод: если указан API_BASE абсолютным URL — строим WS к бекенду напрямую
+    if (apiBase) {
+      try {
+        const parsed = new URL(apiBase);
+        const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+        return `${wsProtocol}//${parsed.host}/ws`;
+      } catch {
+        // невалидный URL — падаем на same-origin
+      }
+    }
+
+    // Fallback: same-origin (может не работать за прокси, если не поддерживается Upgrade)
     return `${protocol}//${runtimeHost}/ws`;
   }
 
