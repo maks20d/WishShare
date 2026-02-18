@@ -90,6 +90,7 @@ logs/
 
 # Playwright
 .playwright/
+frontend/test-results/
 
 # OS
 Thumbs.db
