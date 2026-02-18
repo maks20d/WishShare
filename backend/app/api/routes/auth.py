@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 import secrets
 
 import httpx
@@ -37,10 +37,23 @@ logger = logging.getLogger("wishshare")
 
 
 def _cookie_options() -> dict[str, object]:
-    secure = settings.backend_url.startswith("https://")
-    if secure:
-        return {"samesite": "none", "secure": True}
-    return {"samesite": "lax"}
+    backend = urlparse(settings.backend_url)
+    frontend = urlparse(settings.frontend_url)
+    cross_site = (
+        backend.hostname
+        and frontend.hostname
+        and backend.hostname.lower() != frontend.hostname.lower()
+    )
+    secure = backend.scheme == "https" or frontend.scheme == "https"
+    if cross_site:
+        if not secure:
+            logger.warning(
+                "Cross-site cookies require https. backend_url=%s frontend_url=%s",
+                settings.backend_url,
+                settings.frontend_url,
+            )
+        return {"samesite": "none", "secure": secure}
+    return {"samesite": "lax", "secure": secure}
 
 
 def _safe_next_path(next_path: str | None) -> str:

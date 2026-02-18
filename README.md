@@ -53,6 +53,14 @@ copy .env.example .env
 - BACKEND_CORS_ORIGINS
 - JWT_SECRET_KEY
 
+## Куки авторизации и кросс-домен
+При раздельном хостинге фронтенда и бэкенда (например, Vercel + Render) для cookie `access_token` требуется:
+- BACKEND_URL и FRONTEND_URL должны быть https
+- BACKEND_CORS_ORIGINS должен включать домен фронтенда
+- Запросы должны отправляться с `credentials: "include"`
+
+Если фронтенд работает на другом домене и используется http, браузер заблокирует cookie.
+
 ## Примеры использования
 ```bash
 curl -X POST http://localhost:8000/auth/register \
