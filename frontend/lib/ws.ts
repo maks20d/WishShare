@@ -13,35 +13,8 @@ function resolveWsBase(): string {
     const localHost = isLocalDevHost(runtimeHost);
     const isFrontendDevPort = runtimePort === "3000" || runtimePort === "3001" || runtimePort === "5173";
 
-    if (configured) {
-      if (configured.startsWith("/")) {
-        if (localHost && isFrontendDevPort) {
-          return `${protocol}//${runtimeHost}:8000${configured}`;
-        }
-        return `${protocol}//${runtimeHost}${configured}`;
-      }
-      try {
-        const parsed = new URL(configured.replace(/^ws:/, "http:").replace(/^wss:/, "https:"));
-        if (isLocalDevHost(parsed.hostname)) {
-          return `${protocol}//${runtimeHost}:${parsed.port || "8000"}${parsed.pathname || "/ws"}`;
-        }
-      } catch {
-        // fallback to configured as-is
-      }
-      return configured;
-    }
-
-    if (apiBase) {
-      try {
-        const parsed = new URL(apiBase);
-        const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-        return `${wsProtocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}/ws`;
-      } catch {
-        // fallback to default resolution
-      }
-    }
-
-    if (localHost) {
+    // В браузере используем same-origin WS (/ws) через rewrites, чтобы куки/сессии работали корректно
+    if (localHost && isFrontendDevPort) {
       return `${protocol}//${runtimeHost}:8000/ws`;
     }
     return `${protocol}//${runtimeHost}/ws`;

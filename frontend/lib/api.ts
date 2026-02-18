@@ -7,26 +7,11 @@ function resolveApiBase(): string {
     process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
 
   if (typeof window !== "undefined") {
-    const runtimeHost = window.location.hostname;
-
-    if (configured) {
-      if (configured.startsWith("/")) {
-        return `${window.location.origin}${configured}`;
-      }
-      try {
-        const parsed = new URL(configured);
-        // Keep localhost/127.0.0.1 host aligned with the current frontend host
-        // so auth cookies stay same-site and are sent on /auth/me requests.
-        if (isLocalDevHost(parsed.hostname)) {
-          const port = parsed.port || "8000";
-          return `${parsed.protocol}//${runtimeHost}:${port}`;
-        }
-      } catch {
-        // fallback to configured as-is
-      }
-      return configured;
+    // В браузере всегда используем same-origin прокси (/api), чтобы куки аутентификации были first-party
+    // Поддержим относительные пути вроде "/backend" при явной настройке
+    if (configured && configured.startsWith("/")) {
+      return `${window.location.origin}${configured}`;
     }
-
     return `${window.location.origin}/api`;
   }
 
