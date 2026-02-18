@@ -34,15 +34,34 @@ yarn-error.log*
 .tmp/
 .npm-cache/
 .next/
+.next-cache/
+.turbo/
 out/
 build/
 coverage/
 *.tsbuildinfo
+dist/
+.cache/
+*.tmp
+*.bak
 
 # Environment
 .env
+.env.*
 .env.local
 .env.*.local
+!.env.example
+
+# Secrets
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.kdbx
 
 # Database
 *.db
