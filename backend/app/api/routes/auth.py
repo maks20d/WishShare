@@ -37,23 +37,26 @@ logger = logging.getLogger("wishshare")
 
 
 def _cookie_options() -> dict[str, object]:
-    backend = urlparse(settings.backend_url)
-    frontend = urlparse(settings.frontend_url)
-    cross_site = (
-        backend.hostname
-        and frontend.hostname
-        and backend.hostname.lower() != frontend.hostname.lower()
+    environment = (settings.environment or "local").lower()
+    if environment == "local":
+        return {"samesite": "lax", "secure": False}
+    backend_host = urlparse(settings.backend_url).hostname or ""
+    domain = ".onrender.com" if backend_host.endswith("onrender.com") else (backend_host or None)
+    options: dict[str, object] = {"samesite": "none", "secure": True}
+    if domain:
+        options["domain"] = domain
+    return options
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        "access_token",
+        token,
+        httponly=True,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+        **_cookie_options(),
     )
-    secure = backend.scheme == "https" or frontend.scheme == "https"
-    if cross_site:
-        if not secure:
-            logger.warning(
-                "Cross-site cookies require https. backend_url=%s frontend_url=%s",
-                settings.backend_url,
-                settings.frontend_url,
-            )
-        return {"samesite": "none", "secure": secure}
-    return {"samesite": "lax", "secure": secure}
 
 
 def _safe_next_path(next_path: str | None) -> str:
@@ -73,14 +76,7 @@ def _build_oauth_redirect_response(
     token = create_access_token(str(user.id))
     safe_next = _safe_next_path(next_path)
     response = RedirectResponse(url=f"{settings.frontend_url}{safe_next}", status_code=302)
-    response.set_cookie(
-        "access_token",
-        token,
-        httponly=True,
-        max_age=60 * 60 * 24 * 7,
-        path="/",
-        **_cookie_options(),
-    )
+    _set_auth_cookie(response, token)
     if clear_oauth_state_cookie:
         response.delete_cookie(clear_oauth_state_cookie, **_cookie_options())
     if clear_oauth_next_cookie:
@@ -221,14 +217,7 @@ async def login_user(
         )
 
     token = create_access_token(str(user.id))
-    response.set_cookie(
-        "access_token",
-        token,
-        httponly=True,
-        max_age=60 * 60 * 24 * 7,
-        path="/",
-        **_cookie_options(),
-    )
+    _set_auth_cookie(response, token)
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
 

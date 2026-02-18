@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "WishShare API"
     backend_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
+    environment: str = "local"
     backend_cors_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

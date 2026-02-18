@@ -21,6 +21,8 @@ services:
         sync: false
       - key: BACKEND_CORS_ORIGINS
         sync: false
+      - key: ENVIRONMENT
+        sync: false
   - type: web
     name: wishshare-frontend
     env: node
