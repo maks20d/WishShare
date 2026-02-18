@@ -33,6 +33,13 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _cookie_options() -> dict[str, object]:
+    secure = settings.backend_url.startswith("https://")
+    if secure:
+        return {"samesite": "none", "secure": True}
+    return {"samesite": "lax"}
+
+
 def _safe_next_path(next_path: str | None) -> str:
     if not next_path:
         return "/dashboard"
@@ -54,12 +61,12 @@ def _build_oauth_redirect_response(
         "access_token",
         token,
         httponly=True,
-        samesite="lax",
+        **_cookie_options(),
     )
     if clear_oauth_state_cookie:
-        response.delete_cookie(clear_oauth_state_cookie)
+        response.delete_cookie(clear_oauth_state_cookie, **_cookie_options())
     if clear_oauth_next_cookie:
-        response.delete_cookie(clear_oauth_next_cookie)
+        response.delete_cookie(clear_oauth_next_cookie, **_cookie_options())
     return response
 
 
@@ -159,14 +166,14 @@ async def login_user(payload: LoginRequest, response: Response, db: DbSessionDep
         "access_token",
         token,
         httponly=True,
-        samesite="lax",
+        **_cookie_options(),
     )
     return UserPublic.model_validate(user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_user(response: Response) -> None:
-    response.delete_cookie("access_token")
+    response.delete_cookie("access_token", **_cookie_options())
 
 
 @router.get("/me", response_model=UserPublic)
@@ -250,7 +257,7 @@ async def oauth_google_login(next: str | None = Query(default=None)):
         "oauth_state_google",
         state,
         httponly=True,
-        samesite="lax",
+        **_cookie_options(),
         max_age=600,
     )
     if next:
@@ -258,7 +265,7 @@ async def oauth_google_login(next: str | None = Query(default=None)):
             "oauth_next",
             next,
             httponly=True,
-            samesite="lax",
+            **_cookie_options(),
             max_age=600,
         )
     return response
@@ -287,7 +294,7 @@ async def oauth_github_login(next: str | None = Query(default=None)):
         "oauth_state_github",
         state,
         httponly=True,
-        samesite="lax",
+        **_cookie_options(),
         max_age=600,
     )
     if next:
@@ -295,7 +302,7 @@ async def oauth_github_login(next: str | None = Query(default=None)):
             "oauth_next",
             next,
             httponly=True,
-            samesite="lax",
+            **_cookie_options(),
             max_age=600,
         )
     return response
