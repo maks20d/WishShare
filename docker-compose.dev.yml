@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # Backend сервис для разработки
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: wishshare-backend-dev
+    restart: unless-stopped
+    environment:
+      - APP_NAME=WishShare API (Dev)
+      - BACKEND_URL=http://localhost:8000
+      - FRONTEND_URL=http://localhost:3000
+      - BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
+      - POSTGRES_DSN=sqlite+aiosqlite:///./wishshare.db
+      - REDIS_DSN=redis://redis:6379/0
+      - JWT_SECRET_KEY=dev-secret-key
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=10080
+      - PARSER_BROWSER_FALLBACK=true
+      - PARSER_BROWSER_DOMAINS=ozon.ru,wildberries.ru,lamoda.ru,aliexpress.com,amazon.com,amazon.ru
+      - PARSER_BROWSER_TIMEOUT_MS=45000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_dev_cache:/app/.cache
+    depends_on:
+      - redis
+    networks:
+      - wishshare-dev-network
+
+  # Frontend сервис для разработки
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: wishshare-frontend-dev
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_BASE_URL=ws://localhost:8000/ws
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - frontend_dev_cache:/app/.next
+    depends_on:
+      - backend
+    networks:
+      - wishshare-dev-network
+
+  # Redis для разработки
+  redis:
+    image: redis:7-alpine
+    container_name: wishshare-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - wishshare-dev-network
+
+volumes:
+  redis_dev_data:
+    driver: local
+  backend_dev_cache:
+    driver: local
+  frontend_dev_cache:
+    driver: local
+
+networks:
+  wishshare-dev-network:
+    driver: bridge
