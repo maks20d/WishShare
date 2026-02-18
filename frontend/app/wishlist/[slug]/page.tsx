@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { connectWishlistWs } from "../../../lib/ws";
@@ -557,8 +558,15 @@ export default function WishlistPage() {
               </div>
 
               {giftImageUrl && (
-                <div className="md:col-span-2 h-36 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40">
-                  <img src={giftImageUrl} alt="Предпросмотр изображения подарка" className="h-full w-full object-cover" />
+                <div className="md:col-span-2 h-36 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative">
+                  <Image
+                    src={giftImageUrl}
+                    alt="Предпросмотр изображения подарка"
+                    fill
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                    className="object-cover"
+                    unoptimized
+                  />
                 </div>
               )}
 
@@ -616,8 +624,15 @@ export default function WishlistPage() {
               return (
                 <article key={gift.id} className="surface-panel p-5 md:p-6 space-y-4">
                   {gift.image_url && (
-                    <div className="h-40 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40">
-                      <img src={gift.image_url} alt={gift.title} className="h-full w-full object-cover" />
+                    <div className="h-40 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative">
+                      <Image
+                        src={gift.image_url}
+                        alt={gift.title}
+                        fill
+                        sizes="(max-width: 768px) 100vw, 50vw"
+                        className="object-cover"
+                        unoptimized
+                      />
                     </div>
                   )}
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Image from "next/image";
 import { api } from "../../lib/api";
 import { User, useAuthStore } from "../../store/auth";
 import EditWishlistModal from "../../components/EditWishlistModal";
@@ -446,7 +447,14 @@ export default function DashboardPage() {
                       </div>
                       {profileAvatar && (
                         <div className="h-24 w-24 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40">
-                          <img src={profileAvatar} alt="Аватар" className="h-full w-full object-cover" />
+                          <Image
+                            src={profileAvatar}
+                            alt="Аватар"
+                            width={96}
+                            height={96}
+                            className="h-full w-full object-cover"
+                            unoptimized
+                          />
                         </div>
                       )}
                       <button type="submit" disabled={profileSaving} className="btn-primary">

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Image from "next/image";
 import { api } from "../lib/api";
 
 type Gift = {
@@ -169,8 +170,15 @@ export default function EditGiftModal({
           </div>
 
           {formData.image_url && (
-            <div className="h-32 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40">
-              <img src={formData.image_url} alt="Предпросмотр изображения" className="h-full w-full object-cover" />
+            <div className="h-32 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative">
+              <Image
+                src={formData.image_url}
+                alt="Предпросмотр изображения"
+                fill
+                sizes="200px"
+                className="object-cover"
+                unoptimized
+              />
             </div>
           )}
 
