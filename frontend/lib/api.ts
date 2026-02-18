@@ -37,14 +37,49 @@ export type ApiError = Error & {
 
 const RETRY_BASE_MS = 300;
 const MAX_RETRIES = 2;
+const AUTH_REFRESH_PATH = "/auth/refresh";
+const AUTH_NO_REFRESH = new Set(["/auth/login", "/auth/register", "/auth/logout", AUTH_REFRESH_PATH]);
+let refreshInFlight: Promise<boolean> | null = null;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const shouldAttemptRefresh = (path: string) => !AUTH_NO_REFRESH.has(path);
+
+const refreshAccessToken = async (): Promise<boolean> => {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}${AUTH_REFRESH_PATH}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" }
+      });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+};
+
+const handleUnauthorizedRedirect = () => {
+  if (typeof window === "undefined") return;
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  if (window.location.pathname.startsWith("/auth/")) return;
+  const next = encodeURIComponent(currentPath || "/dashboard");
+  window.location.href = `/auth/login?next=${next}`;
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   const method = options.method ?? "GET";
   let attempt = 0;
   let lastError: ApiError | null = null;
+  let refreshed = false;
 
   while (attempt <= MAX_RETRIES) {
     try {
@@ -79,6 +114,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
           } catch {
             responseBody = undefined;
           }
+        }
+
+        if (res.status === 401 && !refreshed && shouldAttemptRefresh(path)) {
+          const refreshOk = await refreshAccessToken();
+          if (refreshOk) {
+            refreshed = true;
+            continue;
+          }
+          handleUnauthorizedRedirect();
         }
 
         const error: ApiError = new Error(message);

@@ -27,10 +27,10 @@ describe("api client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("marks 401 as unauthorized without masking response", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
-      jsonResponse(401, { detail: "Unauthorized" })
-    );
+  it("marks 401 as unauthorized after refresh fails", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => jsonResponse(401, { detail: "Unauthorized" }))
+      .mockImplementationOnce(() => jsonResponse(401, { detail: "Unauthorized" }));
 
     try {
       await api.get("/auth/me");
@@ -41,6 +41,19 @@ describe("api client", () => {
       expect(err.status).toBe(401);
       expect(err.responseBody).toEqual({ detail: "Unauthorized" });
     }
+  });
+
+  it("refreshes token and retries request on 401", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => jsonResponse(401, { detail: "Unauthorized" }))
+      .mockImplementationOnce(() => new Response(null, { status: 204 }))
+      .mockImplementationOnce(() => jsonResponse(200, { ok: true }));
+
+    const result = await api.get<{ ok: boolean }>("/auth/me");
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("retries on network error and fails after max attempts", async () => {
