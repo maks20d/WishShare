@@ -13,10 +13,12 @@ from app.core.mailer import send_email_verification_email, send_password_reset_e
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
+    create_refresh_token,
     create_email_verification_token,
     create_password_reset_token,
     decode_email_verification_token,
     decode_password_reset_token,
+    decode_refresh_token,
     get_password_hash,
     verify_password,
 )
@@ -59,6 +61,17 @@ def _set_auth_cookie(response: Response, token: str) -> None:
     )
 
 
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        "refresh_token",
+        token,
+        httponly=True,
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+        **_cookie_options(),
+    )
+
+
 def _safe_next_path(next_path: str | None) -> str:
     if not next_path:
         return "/dashboard"
@@ -74,9 +87,11 @@ def _build_oauth_redirect_response(
     clear_oauth_next_cookie: str | None = None,
 ) -> RedirectResponse:
     token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
     safe_next = _safe_next_path(next_path)
     response = RedirectResponse(url=f"{settings.frontend_url}{safe_next}", status_code=302)
     _set_auth_cookie(response, token)
+    _set_refresh_cookie(response, refresh_token)
     if clear_oauth_state_cookie:
         response.delete_cookie(clear_oauth_state_cookie, **_cookie_options())
     if clear_oauth_next_cookie:
@@ -217,7 +232,9 @@ async def login_user(
         )
 
     token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
     _set_auth_cookie(response, token)
+    _set_refresh_cookie(response, refresh_token)
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
 
@@ -225,6 +242,28 @@ async def login_user(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_user(response: Response) -> None:
     response.delete_cookie("access_token", path="/", **_cookie_options())
+    response.delete_cookie("refresh_token", path="/", **_cookie_options())
+
+
+@router.post("/refresh", status_code=status.HTTP_204_NO_CONTENT)
+async def refresh_token(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias="refresh_token"),
+) -> None:
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    payload = decode_refresh_token(refresh_token)
+    if not payload or "sub" not in payload:
+        response.delete_cookie("refresh_token", path="/", **_cookie_options())
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        response.delete_cookie("refresh_token", path="/", **_cookie_options())
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    new_access_token = create_access_token(subject)
+    new_refresh_token = create_refresh_token(subject)
+    _set_auth_cookie(response, new_access_token)
+    _set_refresh_cookie(response, new_refresh_token)
 
 
 @router.get("/me", response_model=UserPublic)
