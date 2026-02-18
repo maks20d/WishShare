@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
@@ -13,6 +15,33 @@ import { useAuthStore } from "../auth";
 
 const resetStore = () => {
   useAuthStore.setState({ user: null, loading: false });
+};
+
+const skipDirs = new Set([
+  "node_modules",
+  ".next",
+  "coverage",
+  "dist",
+  "build",
+  "test-results",
+  ".tmp",
+  ".turbo"
+]);
+
+const allowedExtensions = new Set([".ts", ".tsx", ".js", ".jsx"]);
+
+const collectSourceFiles = (dir: string, out: string[]) => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (skipDirs.has(entry.name)) continue;
+      collectSourceFiles(path.join(dir, entry.name), out);
+      continue;
+    }
+    const ext = path.extname(entry.name);
+    if (allowedExtensions.has(ext)) {
+      out.push(path.join(dir, entry.name));
+    }
+  }
 };
 
 describe("auth store", () => {
@@ -47,5 +76,21 @@ describe("auth store", () => {
 
     await expect(useAuthStore.getState().login("x@y.com", "bad")).rejects.toThrow("Invalid");
     expect(useAuthStore.getState().loading).toBe(false);
+  });
+
+  it("disallows raw fetch outside api client", () => {
+    const root = process.cwd();
+    const apiPath = path.join(root, "lib", "api.ts");
+    const files: string[] = [];
+    collectSourceFiles(root, files);
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (file === apiPath) continue;
+      const content = fs.readFileSync(file, "utf8");
+      if (/\bfetch\s*\(/.test(content) || /window\.fetch\s*\(/.test(content)) {
+        offenders.push(path.relative(root, file));
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
