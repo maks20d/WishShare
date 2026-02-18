@@ -4,15 +4,19 @@ function isLocalDevHost(hostname: string): boolean {
 
 function resolveApiBase(): string {
   const configured =
-    process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
 
   if (typeof window !== "undefined") {
-    // В браузере всегда используем same-origin прокси (/api), чтобы куки аутентификации были first-party
-    // Поддержим относительные пути вроде "/backend" при явной настройке
-    if (configured && configured.startsWith("/")) {
-      return `${window.location.origin}${configured}`;
+    if (configured) {
+      if (configured.startsWith("/")) {
+        return `${window.location.origin}${configured}`;
+      }
+      return configured;
     }
-    return `${window.location.origin}/api`;
+
+    if (isLocalDevHost(window.location.hostname)) {
+      return "http://localhost:8000";
+    }
   }
 
   return configured || "http://localhost:8000";
