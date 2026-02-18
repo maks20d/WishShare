@@ -1,12 +1,12 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../../../lib/api";
 import { useAuthStore } from "../../../store/auth";
 
-export default function RegisterPage() {
+function RegisterContent() {
   const router = useRouter();
   const { register, loading } = useAuthStore();
   const [name, setName] = useState("");
@@ -179,5 +179,13 @@ export default function RegisterPage() {
         </aside>
       </div>
     </main>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <RegisterContent />
+    </Suspense>
   );
 }
