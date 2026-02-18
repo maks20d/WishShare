@@ -77,6 +77,8 @@ def _build_oauth_redirect_response(
         "access_token",
         token,
         httponly=True,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
         **_cookie_options(),
     )
     if clear_oauth_state_cookie:
@@ -223,6 +225,8 @@ async def login_user(
         "access_token",
         token,
         httponly=True,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
         **_cookie_options(),
     )
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
@@ -231,7 +235,7 @@ async def login_user(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_user(response: Response) -> None:
-    response.delete_cookie("access_token", **_cookie_options())
+    response.delete_cookie("access_token", path="/", **_cookie_options())
 
 
 @router.get("/me", response_model=UserPublic)
