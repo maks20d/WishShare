@@ -1,9 +1,10 @@
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from time import perf_counter
+import os
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -18,7 +19,11 @@ from app.db.session import Base, engine
 
 logger = configure_logging()
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI(
+    title=settings.app_name,
+    description="Социальный вишлист с realtime",
+    version="0.1.0",
+)
 
 metrics = {
     "requests_total": 0,
@@ -30,12 +35,24 @@ metrics = {
 }
 
 
+cors_origins_raw = os.getenv("BACKEND_CORS_ORIGINS", "")
+cors_origins = settings.backend_cors_origins
+if not cors_origins and settings.frontend_url:
+    cors_origins = [settings.frontend_url]
+logger.info(
+    "CORS origins raw=%s parsed=%s",
+    cors_origins_raw if cors_origins_raw else "NOT SET",
+    cors_origins,
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.backend_cors_origins,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
 
@@ -96,6 +113,11 @@ async def security_headers_middleware(request: Request, call_next):
         "font-src 'self' data: https:;"
     )
     return response
+
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    return Response(status_code=204)
 
 
 @app.on_event("startup")
