@@ -1,4 +1,6 @@
 import logging
+import json
+from datetime import datetime
 from collections import defaultdict
 from typing import Any
 
@@ -44,12 +46,14 @@ class WishlistConnectionManager:
                     payload = payload_for_friend
                 else:
                     payload = payload_for_public
-                await websocket.send_json(
-                    {
-                        "type": event_type,
-                        "gift": payload,
-                    }
+                message = {
+                    "type": event_type,
+                    "gift": payload,
+                }
+                text = json.dumps(
+                    message, ensure_ascii=False, separators=(",", ":"), default=_json_default
                 )
+                await websocket.send_text(text)
             except Exception:
                 logger.exception("WS broadcast failed slug=%s role=%s", slug, role)
                 to_remove.append(websocket)
@@ -66,3 +70,9 @@ class WishlistConnectionManager:
 
 logger = logging.getLogger("wishshare.ws")
 manager = WishlistConnectionManager()
+
+
+def _json_default(o: Any) -> Any:
+    if isinstance(o, datetime):
+        return o.isoformat()
+    return str(o)
