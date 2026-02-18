@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.routes import auth, og, wishlists, ws
@@ -134,8 +135,8 @@ async def on_startup() -> None:
             result = await conn.exec_driver_sql("SELECT id FROM wishlists WHERE public_token IS NULL OR public_token = ''")
             rows = result.fetchall()
             for (wid,) in rows:
-                await conn.exec_driver_sql(
-                    "UPDATE wishlists SET public_token = :token WHERE id = :id",
+                await conn.execute(
+                    text("UPDATE wishlists SET public_token = :token WHERE id = :id"),
                     {"token": str(uuid4()), "id": wid},
                 )
         except Exception:
