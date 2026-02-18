@@ -108,13 +108,21 @@ async def on_startup() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # lightweight, idempotent migration for public_token
-        try:
-            await conn.exec_driver_sql("ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)")
-        except Exception:
-            # column may already exist or ALTER not supported; ignore
-            pass
-        # ensure unique index (best-effort)
+        result = await conn.exec_driver_sql(
+            "SELECT 1 FROM information_schema.columns WHERE table_name = 'wishlists' AND column_name = 'public_token'"
+        )
+        if result.first() is None:
+            try:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE wishlists ADD COLUMN public_token VARCHAR(36)"
+                )
+            except Exception:
+                logger.error("Failed to add wishlists.public_token", exc_info=True)
+            result = await conn.exec_driver_sql(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = 'wishlists' AND column_name = 'public_token'"
+            )
+            if result.first() is None:
+                raise RuntimeError("Missing column wishlists.public_token")
         try:
             await conn.exec_driver_sql(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_wishlists_public_token ON wishlists(public_token)"
