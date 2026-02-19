@@ -346,6 +346,9 @@ async def update_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
+    import logging
+    logger = logging.getLogger("wishshare.wishlists")
+    
     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
@@ -370,7 +373,26 @@ async def update_wishlist(
 
     await db.commit()
     await db.refresh(wishlist)
-    return await _load_wishlist_with_gifts(db, wishlist, current_user)
+    
+    try:
+        return await _load_wishlist_with_gifts(db, wishlist, current_user)
+    except Exception as e:
+        logger.exception("update_wishlist: failed to load wishlist after update: %s", str(e))
+        # Возвращаем базовый объект
+        return WishlistPublic(
+            id=wishlist.id,
+            slug=wishlist.slug,
+            title=wishlist.title,
+            description=wishlist.description,
+            event_date=wishlist.event_date,
+            privacy=wishlist.privacy,
+            is_secret_santa=wishlist.is_secret_santa,
+            created_at=wishlist.created_at,
+            owner_id=wishlist.owner_id,
+            gifts=[],
+            access_emails=[ae.email for ae in wishlist.access_emails],
+            public_token=wishlist.public_token,
+        )
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -397,6 +419,9 @@ async def create_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
+    import logging
+    logger = logging.getLogger("wishshare.wishlists")
+    
     base_slug = _slugify(payload.title)
     slug = base_slug
     suffix = 1
@@ -426,7 +451,26 @@ async def create_wishlist(
     db.add(wishlist)
     await db.commit()
     await db.refresh(wishlist)
-    return await _load_wishlist_with_gifts(db, wishlist, current_user)
+    
+    try:
+        return await _load_wishlist_with_gifts(db, wishlist, current_user)
+    except Exception as e:
+        logger.exception("create_wishlist: failed to load wishlist after creation: %s", str(e))
+        # Возвращаем базовый объект без загрузки подарков
+        return WishlistPublic(
+            id=wishlist.id,
+            slug=wishlist.slug,
+            title=wishlist.title,
+            description=wishlist.description,
+            event_date=wishlist.event_date,
+            privacy=wishlist.privacy,
+            is_secret_santa=wishlist.is_secret_santa,
+            created_at=wishlist.created_at,
+            owner_id=wishlist.owner_id,
+            gifts=[],
+            access_emails=[ae.email for ae in wishlist.access_emails],
+            public_token=wishlist.public_token,
+        )
 
 
 @router.get("/token/{token}", response_model=WishlistPublic)
@@ -435,6 +479,9 @@ async def get_wishlist_by_token(
     db: DbSessionDep,
     response: Response,
 ) -> WishlistPublic:
+    import logging
+    logger = logging.getLogger("wishshare.wishlists")
+    
     result = await db.execute(select(Wishlist).where(Wishlist.public_token == token))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
@@ -443,7 +490,26 @@ async def get_wishlist_by_token(
     if wishlist.privacy not in ("public", "link_only"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response.headers["Cache-Control"] = "public, max-age=60"
-    return await _load_wishlist_with_gifts(db, wishlist, None)
+    
+    try:
+        return await _load_wishlist_with_gifts(db, wishlist, None)
+    except Exception as e:
+        logger.exception("get_wishlist_by_token: failed to load wishlist: %s", str(e))
+        # Возвращаем базовый объект
+        return WishlistPublic(
+            id=wishlist.id,
+            slug=wishlist.slug,
+            title=wishlist.title,
+            description=wishlist.description,
+            event_date=wishlist.event_date,
+            privacy=wishlist.privacy,
+            is_secret_santa=wishlist.is_secret_santa,
+            created_at=wishlist.created_at,
+            owner_id=wishlist.owner_id,
+            gifts=[],
+            access_emails=[],
+            public_token=wishlist.public_token,
+        )
 
 
 @router.post("/{slug}/rotate-token")
@@ -470,13 +536,33 @@ async def get_wishlist_by_slug(
     db: DbSessionDep,
     viewer: User | None = Depends(get_optional_user),
 ) -> WishlistPublic:
+    import logging
+    logger = logging.getLogger("wishshare.wishlists")
+    
     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
 
     if wishlist.privacy in ("public", "link_only"):
-        return await _load_wishlist_with_gifts(db, wishlist, viewer)
+        try:
+            return await _load_wishlist_with_gifts(db, wishlist, viewer)
+        except Exception as e:
+            logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+            return WishlistPublic(
+                id=wishlist.id,
+                slug=wishlist.slug,
+                title=wishlist.title,
+                description=wishlist.description,
+                event_date=wishlist.event_date,
+                privacy=wishlist.privacy,
+                is_secret_santa=wishlist.is_secret_santa,
+                created_at=wishlist.created_at,
+                owner_id=wishlist.owner_id,
+                gifts=[],
+                access_emails=[],
+                public_token=wishlist.public_token,
+            )
 
     if not viewer:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -485,9 +571,43 @@ async def get_wishlist_by_slug(
         has_access = await _has_friends_access(db, wishlist, viewer)
         if not has_access:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-        return await _load_wishlist_with_gifts(db, wishlist, viewer)
+        try:
+            return await _load_wishlist_with_gifts(db, wishlist, viewer)
+        except Exception as e:
+            logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+            return WishlistPublic(
+                id=wishlist.id,
+                slug=wishlist.slug,
+                title=wishlist.title,
+                description=wishlist.description,
+                event_date=wishlist.event_date,
+                privacy=wishlist.privacy,
+                is_secret_santa=wishlist.is_secret_santa,
+                created_at=wishlist.created_at,
+                owner_id=wishlist.owner_id,
+                gifts=[],
+                access_emails=[],
+                public_token=wishlist.public_token,
+            )
 
-    return await _load_wishlist_with_gifts(db, wishlist, viewer)
+    try:
+        return await _load_wishlist_with_gifts(db, wishlist, viewer)
+    except Exception as e:
+        logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+        return WishlistPublic(
+            id=wishlist.id,
+            slug=wishlist.slug,
+            title=wishlist.title,
+            description=wishlist.description,
+            event_date=wishlist.event_date,
+            privacy=wishlist.privacy,
+            is_secret_santa=wishlist.is_secret_santa,
+            created_at=wishlist.created_at,
+            owner_id=wishlist.owner_id,
+            gifts=[],
+            access_emails=[],
+            public_token=wishlist.public_token,
+        )
 
 
 @router.post("/{slug}/gifts", response_model=GiftPublic, status_code=status.HTTP_201_CREATED)
