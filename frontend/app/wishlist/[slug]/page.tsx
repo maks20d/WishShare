@@ -470,11 +470,16 @@ export default function WishlistPage() {
 
         {isOwner && (
           <section className="surface-panel p-6 md:p-7 space-y-4">
-            <div>
-              <h2 className="text-xl md:text-2xl font-semibold">Добавить подарок</h2>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">
-                Укажите цену и тип подарка. Для коллективного сбора друзья смогут вносить сумму частями.
-              </p>
+            <div className="flex items-center gap-3">
+              <Link href="/dashboard" className="btn-ghost text-sm">
+                ← Назад
+              </Link>
+              <div>
+                <h2 className="text-xl md:text-2xl font-semibold">Добавить подарок</h2>
+                <p className="text-sm text-[var(--text-secondary)] mt-1">
+                  Укажите цену и тип подарка. Для коллективного сбора друзья смогут вносить сумму частями.
+                </p>
+              </div>
             </div>
 
             {createGiftError && (
