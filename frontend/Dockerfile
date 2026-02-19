@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Копирование файлов зависимостей
 COPY package.json package-lock.json* ./
-RUN npm cache clean --force && npm ci --only=production
+RUN npm cache clean --force && npm ci
 
 # Сборка приложения
 FROM base AS builder
