@@ -122,11 +122,6 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    return Response(status_code=204)
-
-
 @app.on_event("startup")
 async def on_startup() -> None:
     try:
@@ -242,10 +237,33 @@ async def on_startup() -> None:
             pass
 
 
+def _get_cors_origin(request: Request) -> str | None:
+    """Get the origin if it matches CORS policy."""
+    origin = request.headers.get("origin")
+    if not origin:
+        return None
+    # Check exact match
+    if origin in cors_origins:
+        return origin
+    # Check regex match for Vercel previews
+    import re
+    if re.match(vercel_origin_regex, origin):
+        return origin
+    return None
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    # Add CORS headers for error responses
+    origin = _get_cors_origin(request)
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 
 app.include_router(auth.router)
