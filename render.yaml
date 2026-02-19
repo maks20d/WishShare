@@ -22,7 +22,7 @@ services:
       - key: BACKEND_CORS_ORIGINS
         sync: false
       - key: ENVIRONMENT
-        sync: false
+        value: production
   - type: web
     name: wishshare-frontend
     env: node
