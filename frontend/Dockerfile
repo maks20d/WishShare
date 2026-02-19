@@ -1,5 +1,5 @@
 # WishShare Frontend Dockerfile
-FROM node:20-alpine AS base
+FROM --platform=linux/amd64 node:20-alpine AS base
 
 # Установка зависимостей для сборки
 FROM base AS deps
@@ -24,10 +24,10 @@ COPY . .
 RUN npm run build
 
 # Production образ
-FROM node:20-alpine AS runner
+FROM --platform=linux/amd64 node:20-alpine AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
 
 RUN apk add --no-cache curl
 
@@ -45,8 +45,8 @@ USER nextjs
 # Экспорт порта
 EXPOSE 3000
 
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
