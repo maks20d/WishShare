@@ -405,8 +405,13 @@ export default function WishlistPage() {
         <header className="surface-panel-strong p-6 md:p-8 space-y-6 hero-glow">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--text-secondary)]">
-                <span>{privacyLabel}</span>
+              <div className="flex items-center gap-3">
+                <a href="/dashboard" className="btn-ghost text-sm">
+                  ← Назад
+                </a>
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--text-secondary)]">
+                  <span>{privacyLabel}</span>
+                </div>
               </div>
               <h1 className="text-3xl md:text-4xl font-bold leading-tight">{wishlist.title}</h1>
               {wishlist.description && (
