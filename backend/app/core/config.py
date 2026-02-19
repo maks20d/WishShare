@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any
 
@@ -10,27 +11,26 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
     environment: str = "local"
-    
+
     # Store as string, parse manually to avoid pydantic parsing issues
     backend_cors_origins_raw: str = ""
-    
+
     @property
     def backend_cors_origins(self) -> list[str]:
         """Parse CORS origins from raw string."""
         raw = self.backend_cors_origins_raw.strip()
         if not raw:
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
-        
+
         # Handle JSON array format
         if raw.startswith("["):
-            import json
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, list):
                     return [str(item).strip() for item in parsed if str(item).strip()]
             except Exception:
                 pass
-        
+
         # Handle comma-separated format
         return [item.strip() for item in raw.split(",") if item.strip()]
 
