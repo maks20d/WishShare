@@ -1,16 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-import { useAuthStore } from "../store/auth";
 
 export default function HomePage() {
-  const { user, fetchMe } = useAuthStore();
-
-  useEffect(() => {
-    fetchMe();
-  }, [fetchMe]);
-
   return (
     <main className="min-h-screen px-4 py-10 grid-mesh text-slate-50">
       <div className="max-w-6xl mx-auto space-y-10">
@@ -28,20 +20,12 @@ export default function HomePage() {
                 за прогрессом. Владелец видит только статус и сумму, имена остаются скрыты.
               </p>
               <div className="flex flex-wrap gap-3">
-                {user ? (
-                  <Link href="/dashboard" className="btn-primary">
-                    Перейти к вишлистам
-                  </Link>
-                ) : (
-                  <>
-                    <Link href="/auth/register" className="btn-primary">
-                      Создать вишлист
-                    </Link>
-                    <Link href="/auth/login" className="btn-ghost">
-                      Войти
-                    </Link>
-                  </>
-                )}
+                <Link href="/auth/register" className="btn-primary">
+                  Создать вишлист
+                </Link>
+                <Link href="/auth/login" className="btn-ghost">
+                  Войти
+                </Link>
               </div>
             </div>
             <div className="space-y-4">
