@@ -1,4 +1,4 @@
-import json
+import os
 from typing import Any
 
 from pydantic import field_validator
@@ -10,10 +10,29 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
     environment: str = "local"
-    backend_cors_origins: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
+    
+    # Store as string, parse manually to avoid pydantic parsing issues
+    backend_cors_origins_raw: str = ""
+    
+    @property
+    def backend_cors_origins(self) -> list[str]:
+        """Parse CORS origins from raw string."""
+        raw = self.backend_cors_origins_raw.strip()
+        if not raw:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        
+        # Handle JSON array format
+        if raw.startswith("["):
+            import json
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                pass
+        
+        # Handle comma-separated format
+        return [item.strip() for item in raw.split(",") if item.strip()]
 
     # Database configuration
     # For development: sqlite+aiosqlite:///./wishshare.db
@@ -63,27 +82,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
-    @field_validator("backend_cors_origins", mode="before")
-    @classmethod
-    def _parse_cors_origins(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return []
-            if raw.startswith("["):
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, list):
-                        return [str(item).strip() for item in parsed if str(item).strip()]
-                except json.JSONDecodeError:
-                    pass
-            return [item.strip() for item in raw.split(",") if item.strip()]
-        return [str(value).strip()]
 
 
 settings = Settings()
