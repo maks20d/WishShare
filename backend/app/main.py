@@ -23,6 +23,7 @@ app = FastAPI(
     title=settings.app_name,
     description="Социальный вишлист с realtime",
     version="0.1.0",
+    debug=True,
 )
 
 metrics = {
