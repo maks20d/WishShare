@@ -109,14 +109,17 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "img-src 'self' data: https:; "
-        "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "connect-src 'self' http: https: ws: wss:; "
-        "font-src 'self' data: https:;"
-    )
+    
+    # CSP only for production (development needs 'unsafe-eval' for Turbopack)
+    if settings.environment == "production":
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "img-src 'self' data: https:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "connect-src 'self' http: https: ws: wss:; "
+            "font-src 'self' data: https:;"
+        )
     return response
 
 
