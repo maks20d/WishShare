@@ -31,9 +31,9 @@ COPY requirements.txt .
 # Установка Python зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Установка Playwright браузеров
+# Установка Playwright браузеров (без системных зависимостей)
 RUN python -m playwright install chromium
-RUN python -m playwright install-deps chromium
+# playwright install-deps не работает в Debian Trixie, пропускаем
 
 # Копирование приложения
 COPY . .
