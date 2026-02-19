@@ -14,11 +14,17 @@ class Settings(BaseSettings):
 
     # Store as string, parse manually to avoid pydantic parsing issues
     backend_cors_origins_raw: str = ""
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "allow"  # Allow extra fields from environment
 
     @property
     def backend_cors_origins(self) -> list[str]:
         """Parse CORS origins from raw string."""
-        raw = self.backend_cors_origins_raw.strip()
+        # First try to get from environment variable directly
+        raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
         if not raw:
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
 

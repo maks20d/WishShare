@@ -35,7 +35,6 @@ metrics = {
 }
 
 
-cors_origins_raw = os.getenv("BACKEND_CORS_ORIGINS", "")
 cors_origins = settings.backend_cors_origins
 if not cors_origins and settings.frontend_url:
     cors_origins = [settings.frontend_url]
@@ -45,8 +44,7 @@ if not cors_origins and settings.frontend_url:
 vercel_origin_regex = r"https://[a-z0-9-]+\.vercel\.app"
 
 logger.info(
-    "CORS origins raw=%s parsed=%s vercel_regex=%s",
-    cors_origins_raw if cors_origins_raw else "NOT SET",
+    "CORS origins parsed=%s vercel_regex=%s",
     cors_origins,
     vercel_origin_regex,
 )
