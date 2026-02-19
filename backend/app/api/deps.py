@@ -19,6 +19,13 @@ async def get_current_user(
     db: DbSessionDep,
     access_token: str | None = Cookie(default=None, alias="access_token"),
 ) -> User:
+    logger.debug(
+        "get_current_user: path=%s cookies=%s auth_header=%s",
+        request.url.path,
+        list(request.cookies.keys()),
+        request.headers.get("Authorization", "None")[:50] if request.headers.get("Authorization") else "None",
+    )
+    
     token = access_token
     if not token:
         auth_header = request.headers.get("Authorization")
@@ -34,6 +41,8 @@ async def get_current_user(
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    logger.debug("get_current_user: token found, length=%d", len(token) if token else 0)
+    
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         logger.info("Auth token invalid path=%s", request.url.path)
@@ -41,15 +50,23 @@ async def get_current_user(
 
     try:
         user_id = int(payload["sub"])
+        logger.debug("get_current_user: decoded user_id=%s", user_id)
     except (TypeError, ValueError):
         logger.info("Auth token subject invalid path=%s", request.url.path)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+    except Exception as e:
+        logger.exception("get_current_user: DB error when fetching user_id=%s", user_id)
+        raise HTTPException(status_code=500, detail="Database error")
+    
     if not user:
         logger.info("Auth user missing path=%s user_id=%s", request.url.path, user_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    logger.debug("get_current_user: successfully authenticated user_id=%s email=%s", user.id, user.email)
     return user
 
 
