@@ -83,7 +83,7 @@ jobs:
           NEXT_PUBLIC_WS_BASE_URL: ws://localhost:8000
         run: npx playwright test
       - name: Notify Slack on failure (tests)
-        if: ${{ failure() && secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ failure() && env.SLACK_WEBHOOK_URL != '' }}
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
@@ -148,7 +148,7 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
       - name: Notify Slack (optional)
-        if: ${{ success() && secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ success() && env.SLACK_WEBHOOK_URL != '' }}
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
@@ -159,7 +159,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
       - name: Notify Slack on failure (docker)
-        if: ${{ failure() && secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ failure() && env.SLACK_WEBHOOK_URL != '' }}
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
