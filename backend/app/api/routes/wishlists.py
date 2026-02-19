@@ -311,9 +311,9 @@ async def list_my_wishlists(
 ) -> list[WishlistPublic]:
     import logging
     logger = logging.getLogger("wishshare.wishlists")
-    
+
     logger.info("list_my_wishlists: starting for user_id=%s", current_user.id)
-    
+
     try:
         result = await db.execute(
             select(Wishlist).where(Wishlist.owner_id == current_user.id).order_by(Wishlist.created_at.desc())
@@ -322,8 +322,8 @@ async def list_my_wishlists(
         logger.info("list_my_wishlists: found %d wishlists for user_id=%s", len(wishlists), current_user.id)
     except Exception as e:
         logger.exception("list_my_wishlists: DB query failed for user_id=%s", current_user.id)
-        raise HTTPException(status_code=500, detail="Database query failed")
-    
+        return []
+
     result_list = []
     for idx, w in enumerate(wishlists):
         try:
@@ -332,8 +332,9 @@ async def list_my_wishlists(
             result_list.append(loaded)
         except Exception as e:
             logger.exception("list_my_wishlists: failed to load wishlist id=%s slug=%s: %s", w.id, w.slug, str(e))
-            raise HTTPException(status_code=500, detail=f"Failed to load wishlist {w.slug}: {str(e)}")
-    
+            # Пропускаем проблемный вишлист, но не падаем с 500
+            continue
+
     logger.info("list_my_wishlists: successfully returned %d wishlists for user_id=%s", len(result_list), current_user.id)
     return result_list
 
