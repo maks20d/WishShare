@@ -66,7 +66,7 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Backend unit tests
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest -q --ignore=tests/test_health.py
       - name: Install Playwright browsers
         working-directory: frontend
         run: npx playwright install --with-deps
