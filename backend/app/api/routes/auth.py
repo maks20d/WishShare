@@ -1,5 +1,6 @@
 from urllib.parse import urlencode, urlparse
 import secrets
+from typing import TypedDict
 
 import httpx
 import logging
@@ -38,16 +39,34 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger("wishshare")
 
 
-def _cookie_options() -> dict[str, object]:
+class CookieOptions(TypedDict, total=False):
+    """Type-safe cookie options for cross-origin authentication."""
+    samesite: str
+    secure: bool
+
+
+def _cookie_options() -> CookieOptions:
+    """
+    Return cookie options based on environment.
+    
+    For cross-origin authentication (frontend on Vercel, backend on Render):
+    - samesite="none" - required for cross-origin requests
+    - secure=True - required for HTTPS (Render uses HTTPS)
+    - NO domain - cookie must NOT be tied to a specific domain for cross-origin
+    
+    For local development:
+    - samesite="lax" - more secure, works for same-origin
+    - secure=False - HTTP on localhost
+    """
     environment = (settings.environment or "local").lower()
     if environment == "local":
+        logger.debug("Cookie options: local mode (samesite=lax, secure=False)")
         return {"samesite": "lax", "secure": False}
-    backend_host = urlparse(settings.backend_url).hostname or ""
-    domain = ".onrender.com" if backend_host.endswith("onrender.com") else (backend_host or None)
-    options: dict[str, object] = {"samesite": "none", "secure": True}
-    if domain:
-        options["domain"] = domain
-    return options
+    # Production: cross-origin cookies
+    # DO NOT set domain - it breaks cross-origin cookie sending
+    # Browser will send cookie to the backend URL that set it
+    logger.info("Cookie options: production mode (samesite=none, secure=True)")
+    return {"samesite": "none", "secure": True}
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
