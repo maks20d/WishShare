@@ -39,15 +39,22 @@ cors_origins_raw = os.getenv("BACKEND_CORS_ORIGINS", "")
 cors_origins = settings.backend_cors_origins
 if not cors_origins and settings.frontend_url:
     cors_origins = [settings.frontend_url]
+
+# Regex pattern for Vercel preview deployments (*.vercel.app)
+# This allows dynamic subdomains like: wish-share-abc123.vercel.app
+vercel_origin_regex = r"https://[a-z0-9-]+\.vercel\.app"
+
 logger.info(
-    "CORS origins raw=%s parsed=%s",
+    "CORS origins raw=%s parsed=%s vercel_regex=%s",
     cors_origins_raw if cors_origins_raw else "NOT SET",
     cors_origins,
+    vercel_origin_regex,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=vercel_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
