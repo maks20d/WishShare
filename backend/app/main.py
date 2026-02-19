@@ -309,3 +309,27 @@ def _handle_async_exception(loop, context) -> None:
         logger.exception("Async error: %s", message, exc_info=exc)
     else:
         logger.error("Async error: %s", message)
+
+
+# Global exception handler for better error logging
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception occurred for %s %s", request.method, request.url)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error_type": type(exc).__name__, "error_msg": str(exc)}
+    )
+
+
+# Health check endpoint for debugging
+@app.get("/health/db")
+async def health_db():
+    try:
+        from app.db.session import async_session_factory
+        from sqlalchemy import select
+        async with async_session_factory() as session:
+            result = await session.execute(select(1))
+            return {"status": "ok", "database": str(result.scalar())}
+    except Exception as e:
+        logger.exception("DB health check failed")
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
