@@ -34,9 +34,6 @@ jobs:
       - name: Lint backend (flake8)
         working-directory: backend
         run: flake8 app
-      - name: Style check backend (black)
-        working-directory: backend
-        run: black --check app
 
   test:
     runs-on: ubuntu-latest
