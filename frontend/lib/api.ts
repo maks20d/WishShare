@@ -67,11 +67,15 @@ const refreshAccessToken = async (): Promise<boolean> => {
 };
 
 const handleUnauthorizedRedirect = () => {
+  // Отключено — не редиректим автоматически при 401
+  // Пусть фронтенд сам решает что показывать
+  /*
   if (typeof window === "undefined") return;
   const currentPath = `${window.location.pathname}${window.location.search}`;
   if (window.location.pathname.startsWith("/auth/")) return;
   const next = encodeURIComponent(currentPath || "/dashboard");
   window.location.href = `/auth/login?next=${next}`;
+  */
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
