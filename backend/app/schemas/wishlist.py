@@ -43,7 +43,7 @@ class WishlistUpdate(BaseModel):
 class GiftBase(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     url: str | None = None
-    price: float = Field(gt=0)
+    price: float | None = Field(default=None, gt=0)
     image_url: str | None = None
     is_collective: bool = False
     is_private: bool = False
@@ -91,8 +91,7 @@ class ContributionPublic(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ReservationPublic(BaseModel):
@@ -102,8 +101,7 @@ class ReservationPublic(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class GiftPublic(BaseModel):
@@ -124,8 +122,7 @@ class GiftPublic(BaseModel):
     is_unavailable: bool = False
     unavailable_reason: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class WishlistPublic(BaseModel):
@@ -142,5 +139,4 @@ class WishlistPublic(BaseModel):
     access_emails: list[str] = []
     public_token: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

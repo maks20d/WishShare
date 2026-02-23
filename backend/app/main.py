@@ -122,6 +122,9 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    # Refuse to start with insecure JWT secret
+    settings.validate_secrets()
+
     try:
         import asyncio
 
@@ -309,14 +312,6 @@ def _handle_async_exception(loop, context) -> None:
         logger.error("Async error: %s", message)
 
 
-# Global exception handler for better error logging
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception occurred for %s %s", request.method, request.url)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error", "error_type": type(exc).__name__, "error_msg": str(exc)}
-    )
 
 
 # Health check endpoint for debugging
