@@ -1,28 +1,55 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
+import logging
+import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import uuid4
 
 from app.api.deps import DbSessionDep, get_current_user, get_optional_user
-from app.models.models import Contribution, Gift, PrivacyLevelEnum, Reservation, User, Wishlist, WishlistAccessEmail
+from app.core.mailer import send_unavailable_gift_notice
+from app.models.models import (
+    Contribution, Gift, PrivacyLevelEnum, Reservation, User, Wishlist,
+    WishlistAccessEmail, WishlistDonation, WishlistItemArchive,
+)
 from app.realtime.manager import manager
-from uuid import uuid4
 from app.schemas.wishlist import (
     ContributionCreate,
+    ContributionPublic,
     GiftBase,
     GiftPublic,
     GiftUpdate,
+    ReservationPublic,
     WishlistCreate,
     WishlistPublic,
     WishlistUpdate,
 )
 
+logger = logging.getLogger("wishshare.wishlists")
 
 router = APIRouter(prefix="/wishlists", tags=["wishlists"])
 compat_router = APIRouter(tags=["wishlists"])
+
+
+def _wishlist_fallback(wishlist: Wishlist, *, viewer_is_owner: bool = False) -> WishlistPublic:
+    """Return a minimal WishlistPublic when full loading fails, avoiding code duplication."""
+    return WishlistPublic(
+        id=wishlist.id,
+        slug=wishlist.slug,
+        title=wishlist.title,
+        description=wishlist.description,
+        event_date=wishlist.event_date,
+        privacy=wishlist.privacy,
+        is_secret_santa=wishlist.is_secret_santa,
+        created_at=wishlist.created_at,
+        owner_id=wishlist.owner_id,
+        gifts=[],
+        access_emails=[ae.email for ae in wishlist.access_emails] if viewer_is_owner else [],
+        public_token=wishlist.public_token if viewer_is_owner else None,
+    )
 
 
 def _compute_gift_progress(price: float | None, total_contributions: float) -> tuple[float, bool]:
@@ -71,7 +98,6 @@ def _serialize_gift(
 
     reservation_public = None
     if gift.reservation:
-        from app.schemas.wishlist import ReservationPublic
 
         reservation_user = user_lookup.get(gift.reservation.user_id)
         if role_for_sensitive == "friend":
@@ -89,7 +115,6 @@ def _serialize_gift(
                 user_id=None,
             )
 
-    from app.schemas.wishlist import ContributionPublic
 
     contributions_public: list[ContributionPublic] = []
     if role_for_sensitive == "friend":
@@ -150,8 +175,6 @@ async def _load_wishlist_with_gifts(
     wishlist: Wishlist,
     viewer: User | None,
 ) -> WishlistPublic:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
     
     logger.debug("_load_wishlist_with_gifts: start wishlist_id=%s slug=%s", wishlist.id, wishlist.slug)
     
@@ -295,8 +318,6 @@ async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User
 
 
 def _slugify(title: str) -> str:
-    import re
-
     slug = title.strip().lower()
     slug = re.sub(r"[^a-z0-9а-яё]+", "-", slug)
     slug = re.sub(r"-+", "-", slug).strip("-")
@@ -308,34 +329,168 @@ def _slugify(title: str) -> str:
 async def list_my_wishlists(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
+    limit: int = 50,
+    offset: int = 0,
 ) -> list[WishlistPublic]:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
+    """
+    Return wishlists owned by the current user (paginated).
 
-    logger.info("list_my_wishlists: starting for user_id=%s", current_user.id)
+    Query params:
+      limit  – max items to return (default 50, max 100)
+      offset – skip first N wishlists (for pagination)
 
+    Uses a batch-load strategy: 7 fixed queries total, regardless of list size.
+    """
+    limit = min(max(1, limit), 100)
+    offset = max(0, offset)
+
+    logger.info("list_my_wishlists: starting for user_id=%s limit=%s offset=%s", current_user.id, limit, offset)
+
+    # ── 1. Wishlists ────────────────────────────────────────────────────────
     try:
-        result = await db.execute(
-            select(Wishlist).where(Wishlist.owner_id == current_user.id).order_by(Wishlist.created_at.desc())
+        wl_result = await db.execute(
+            select(Wishlist)
+            .where(Wishlist.owner_id == current_user.id)
+            .order_by(Wishlist.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
-        wishlists = list(result.scalars().unique())
-        logger.info("list_my_wishlists: found %d wishlists for user_id=%s", len(wishlists), current_user.id)
-    except Exception as e:
+        wishlists = list(wl_result.scalars().unique())
+    except Exception:
         logger.exception("list_my_wishlists: DB query failed for user_id=%s", current_user.id)
         return []
 
-    result_list = []
-    for idx, w in enumerate(wishlists):
-        try:
-            logger.debug("list_my_wishlists: processing wishlist %d (id=%s, slug=%s)", idx, w.id, w.slug)
-            loaded = await _load_wishlist_with_gifts(db, w, current_user)
-            result_list.append(loaded)
-        except Exception as e:
-            logger.exception("list_my_wishlists: failed to load wishlist id=%s slug=%s: %s", w.id, w.slug, str(e))
-            # Пропускаем проблемный вишлист, но не падаем с 500
-            continue
+    if not wishlists:
+        return []
 
-    logger.info("list_my_wishlists: successfully returned %d wishlists for user_id=%s", len(result_list), current_user.id)
+    wishlist_ids = [w.id for w in wishlists]
+    wishlist_map: dict[int, Wishlist] = {w.id: w for w in wishlists}
+
+    # ── 2. All gifts ─────────────────────────────────────────────────────────
+    gifts_result = await db.execute(
+        select(Gift)
+        .where(Gift.wishlist_id.in_(wishlist_ids))
+        .order_by(Gift.created_at.asc())
+    )
+    all_gifts: list[Gift] = list(gifts_result.scalars().unique())
+    gift_ids = [g.id for g in all_gifts]
+
+    # gifts grouped by wishlist
+    gifts_by_wl: dict[int, list[Gift]] = {wid: [] for wid in wishlist_ids}
+    for g in all_gifts:
+        gifts_by_wl[g.wishlist_id].append(g)
+
+    # ── 3. Contribution sums per gift ────────────────────────────────────────
+    contributions_map: dict[int, float] = {}
+    if gift_ids:
+        contrib_sum_result = await db.execute(
+            select(
+                Contribution.gift_id,
+                func.coalesce(func.sum(Contribution.amount), 0),
+            )
+            .where(Contribution.gift_id.in_(gift_ids))
+            .group_by(Contribution.gift_id)
+        )
+        contributions_map = {row[0]: float(row[1]) for row in contrib_sum_result.all()}
+
+    # ── 4. Reservations ──────────────────────────────────────────────────────
+    reservation_map: dict[int, Reservation] = {}  # gift_id → Reservation
+    if gift_ids:
+        res_result = await db.execute(
+            select(Reservation).where(Reservation.gift_id.in_(gift_ids))
+        )
+        for rsv in res_result.scalars().unique():
+            reservation_map[rsv.gift_id] = rsv
+
+    # ── 5. Contributions detail (for owner's own wishlists all roles are "owner",
+    #       so detail is only needed for gift.contributions list – kept empty for owner view)
+    contrib_by_gift: dict[int, list[Contribution]] = {gid: [] for gid in gift_ids}
+    if gift_ids:
+        contrib_detail_result = await db.execute(
+            select(Contribution).where(Contribution.gift_id.in_(gift_ids))
+        )
+        for c in contrib_detail_result.scalars().unique():
+            contrib_by_gift[c.gift_id].append(c)
+
+    # ── 6. Users referenced by reservations / contributions ─────────────────
+    user_ids: set[int] = set()
+    for rsv in reservation_map.values():
+        user_ids.add(rsv.user_id)
+    for contribs in contrib_by_gift.values():
+        for c in contribs:
+            user_ids.add(c.user_id)
+
+    user_lookup: dict[int, User] = {}
+    if user_ids:
+        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        user_lookup = {u.id: u for u in users_result.scalars().unique()}
+
+    # ── 7. Access emails (only for owner, batch) ─────────────────────────────
+    access_emails_by_wl: dict[int, list[str]] = {wid: [] for wid in wishlist_ids}
+    ae_result = await db.execute(
+        select(WishlistAccessEmail)
+        .where(WishlistAccessEmail.wishlist_id.in_(wishlist_ids))
+        .order_by(WishlistAccessEmail.email.asc())
+    )
+    for ae in ae_result.scalars().unique():
+        access_emails_by_wl[ae.wishlist_id].append(ae.email)
+
+    # ── Assemble results ─────────────────────────────────────────────────────
+    result_list: list[WishlistPublic] = []
+    for wishlist in wishlists:
+        try:
+            # Owner always sees everything for their own wishlists
+            viewer_role = "owner"
+            wl_gifts = gifts_by_wl.get(wishlist.id, [])
+
+            # Attach relationships to gift objects in-memory (no extra DB calls)
+            for gift in wl_gifts:
+                gift.reservation = reservation_map.get(gift.id)  # type: ignore[assignment]
+                gift.contributions = contrib_by_gift.get(gift.id, [])  # type: ignore[assignment]
+
+            privacy_value = wishlist.privacy
+            if isinstance(privacy_value, str):
+                try:
+                    privacy_value = PrivacyLevelEnum(privacy_value)
+                except ValueError:
+                    pass
+
+            gift_public_list = [
+                _serialize_gift(
+                    gift,
+                    contributions_map.get(gift.id, 0.0),
+                    viewer_role=viewer_role,
+                    user_lookup=user_lookup,
+                    is_secret_santa=wishlist.is_secret_santa,
+                )
+                for gift in wl_gifts
+            ]
+
+            result_list.append(WishlistPublic(
+                id=wishlist.id,
+                slug=wishlist.slug,
+                title=wishlist.title,
+                description=wishlist.description,
+                event_date=wishlist.event_date,
+                privacy=privacy_value,
+                is_secret_santa=wishlist.is_secret_santa,
+                created_at=wishlist.created_at,
+                owner_id=wishlist.owner_id,
+                gifts=gift_public_list,
+                access_emails=access_emails_by_wl.get(wishlist.id, []),
+                public_token=wishlist.public_token,
+            ))
+        except Exception:
+            logger.exception(
+                "list_my_wishlists: failed to serialize wishlist id=%s slug=%s",
+                wishlist.id, wishlist.slug,
+            )
+            result_list.append(_wishlist_fallback(wishlist, viewer_is_owner=True))
+
+    logger.info(
+        "list_my_wishlists: returned %d wishlists for user_id=%s",
+        len(result_list), current_user.id,
+    )
     return result_list
 
 
@@ -346,8 +501,6 @@ async def update_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
     
     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
     wishlist = result.scalar_one_or_none()
@@ -378,21 +531,7 @@ async def update_wishlist(
         return await _load_wishlist_with_gifts(db, wishlist, current_user)
     except Exception as e:
         logger.exception("update_wishlist: failed to load wishlist after update: %s", str(e))
-        # Возвращаем базовый объект
-        return WishlistPublic(
-            id=wishlist.id,
-            slug=wishlist.slug,
-            title=wishlist.title,
-            description=wishlist.description,
-            event_date=wishlist.event_date,
-            privacy=wishlist.privacy,
-            is_secret_santa=wishlist.is_secret_santa,
-            created_at=wishlist.created_at,
-            owner_id=wishlist.owner_id,
-            gifts=[],
-            access_emails=[ae.email for ae in wishlist.access_emails],
-            public_token=wishlist.public_token,
-        )
+        return _wishlist_fallback(wishlist, viewer_is_owner=True)
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -419,8 +558,6 @@ async def create_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
     
     base_slug = _slugify(payload.title)
     slug = base_slug
@@ -440,7 +577,7 @@ async def create_wishlist(
         privacy=payload.privacy.value if hasattr(payload.privacy, "value") else payload.privacy,
         is_secret_santa=payload.is_secret_santa,
         slug=slug,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         public_token=str(uuid4()),
     )
     normalized_emails = _normalize_access_emails(payload.access_emails)
@@ -456,21 +593,7 @@ async def create_wishlist(
         return await _load_wishlist_with_gifts(db, wishlist, current_user)
     except Exception as e:
         logger.exception("create_wishlist: failed to load wishlist after creation: %s", str(e))
-        # Возвращаем базовый объект без загрузки подарков
-        return WishlistPublic(
-            id=wishlist.id,
-            slug=wishlist.slug,
-            title=wishlist.title,
-            description=wishlist.description,
-            event_date=wishlist.event_date,
-            privacy=wishlist.privacy,
-            is_secret_santa=wishlist.is_secret_santa,
-            created_at=wishlist.created_at,
-            owner_id=wishlist.owner_id,
-            gifts=[],
-            access_emails=[ae.email for ae in wishlist.access_emails],
-            public_token=wishlist.public_token,
-        )
+        return _wishlist_fallback(wishlist, viewer_is_owner=True)
 
 
 @router.get("/token/{token}", response_model=WishlistPublic)
@@ -479,9 +602,6 @@ async def get_wishlist_by_token(
     db: DbSessionDep,
     response: Response,
 ) -> WishlistPublic:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
-    
     result = await db.execute(select(Wishlist).where(Wishlist.public_token == token))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
@@ -490,26 +610,12 @@ async def get_wishlist_by_token(
     if wishlist.privacy not in ("public", "link_only"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response.headers["Cache-Control"] = "public, max-age=60"
-    
+
     try:
         return await _load_wishlist_with_gifts(db, wishlist, None)
     except Exception as e:
         logger.exception("get_wishlist_by_token: failed to load wishlist: %s", str(e))
-        # Возвращаем базовый объект
-        return WishlistPublic(
-            id=wishlist.id,
-            slug=wishlist.slug,
-            title=wishlist.title,
-            description=wishlist.description,
-            event_date=wishlist.event_date,
-            privacy=wishlist.privacy,
-            is_secret_santa=wishlist.is_secret_santa,
-            created_at=wishlist.created_at,
-            owner_id=wishlist.owner_id,
-            gifts=[],
-            access_emails=[],
-            public_token=wishlist.public_token,
-        )
+        return _wishlist_fallback(wishlist)
 
 
 @router.post("/{slug}/rotate-token")
@@ -536,33 +642,19 @@ async def get_wishlist_by_slug(
     db: DbSessionDep,
     viewer: User | None = Depends(get_optional_user),
 ) -> WishlistPublic:
-    import logging
-    logger = logging.getLogger("wishshare.wishlists")
-    
     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
+
+    viewer_is_owner = viewer is not None and viewer.id == wishlist.owner_id
 
     if wishlist.privacy in ("public", "link_only"):
         try:
             return await _load_wishlist_with_gifts(db, wishlist, viewer)
         except Exception as e:
             logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
-            return WishlistPublic(
-                id=wishlist.id,
-                slug=wishlist.slug,
-                title=wishlist.title,
-                description=wishlist.description,
-                event_date=wishlist.event_date,
-                privacy=wishlist.privacy,
-                is_secret_santa=wishlist.is_secret_santa,
-                created_at=wishlist.created_at,
-                owner_id=wishlist.owner_id,
-                gifts=[],
-                access_emails=[],
-                public_token=wishlist.public_token,
-            )
+            return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
 
     if not viewer:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -575,39 +667,13 @@ async def get_wishlist_by_slug(
             return await _load_wishlist_with_gifts(db, wishlist, viewer)
         except Exception as e:
             logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
-            return WishlistPublic(
-                id=wishlist.id,
-                slug=wishlist.slug,
-                title=wishlist.title,
-                description=wishlist.description,
-                event_date=wishlist.event_date,
-                privacy=wishlist.privacy,
-                is_secret_santa=wishlist.is_secret_santa,
-                created_at=wishlist.created_at,
-                owner_id=wishlist.owner_id,
-                gifts=[],
-                access_emails=[],
-                public_token=wishlist.public_token,
-            )
+            return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
 
     try:
         return await _load_wishlist_with_gifts(db, wishlist, viewer)
     except Exception as e:
         logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
-        return WishlistPublic(
-            id=wishlist.id,
-            slug=wishlist.slug,
-            title=wishlist.title,
-            description=wishlist.description,
-            event_date=wishlist.event_date,
-            privacy=wishlist.privacy,
-            is_secret_santa=wishlist.is_secret_santa,
-            created_at=wishlist.created_at,
-            owner_id=wishlist.owner_id,
-            gifts=[],
-            access_emails=[],
-            public_token=wishlist.public_token,
-        )
+        return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
 
 
 @router.post("/{slug}/gifts", response_model=GiftPublic, status_code=status.HTTP_201_CREATED)
@@ -866,7 +932,6 @@ async def contribute_to_gift(
     db.add(contribution)
     # append-only donation ledger (best-effort)
     try:
-        from app.models.models import WishlistDonation
         donation = WishlistDonation(
             wishlist_id=gift.wishlist_id,
             gift_id=gift.id,
@@ -1021,7 +1086,6 @@ async def delete_gift(
             detail="Cannot delete gift with active contributions",
         )
 
-    from app.models.models import WishlistItemArchive
     gift.is_unavailable = True
     gift.unavailable_reason = "Этот товар был удален из каталога"
     archive = WishlistItemArchive(

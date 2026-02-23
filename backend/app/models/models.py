@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum as StrEnumBase
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, Numeric, String
@@ -16,11 +16,11 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     wishlists: Mapped[list["Wishlist"]] = relationship(back_populates="owner")
@@ -45,7 +45,7 @@ class Wishlist(Base):
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     privacy: Mapped[str] = mapped_column(String(20), default=PrivacyLevelEnum.LINK_ONLY.value)
     is_secret_santa: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     public_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid4()))
 
     owner: Mapped[User] = relationship(back_populates="wishlists")
@@ -69,7 +69,7 @@ class Gift(Base):
     is_private: Mapped[bool] = mapped_column(Boolean, default=False)
     is_unavailable: Mapped[bool] = mapped_column(Boolean, default=False)
     unavailable_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     wishlist: Mapped[Wishlist] = relationship(back_populates="gifts")
     reservation: Mapped["Reservation | None"] = relationship(
@@ -99,7 +99,7 @@ class Reservation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     gift_id: Mapped[int] = mapped_column(ForeignKey("gifts.id"), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     gift: Mapped[Gift] = relationship(back_populates="reservation")
     user: Mapped[User] = relationship(back_populates="reservations")
@@ -112,7 +112,7 @@ class Contribution(Base):
     gift_id: Mapped[int] = mapped_column(ForeignKey("gifts.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     gift: Mapped[Gift] = relationship(back_populates="contributions")
     user: Mapped[User] = relationship(back_populates="contributions")
@@ -132,7 +132,7 @@ class WishlistItemArchive(Base):
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     last_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class WishlistDonation(Base):
@@ -143,7 +143,7 @@ class WishlistDonation(Base):
     gift_id: Mapped[int] = mapped_column(Integer, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_wishlist_donations_amount_positive"),
