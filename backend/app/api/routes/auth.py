@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.deps import DbSessionDep, get_current_user
 from app.core.mailer import send_email_verification_email, send_password_reset_email
 from app.core.config import settings
+from app.core.rate_limit import check_rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -175,10 +176,13 @@ def _validate_oauth_state(
 
 
 @router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
-async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPublic:
-    existing = await db.execute(select(User).where(User.email == payload.email))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+async def register_user(payload: RegisterRequest, request: Request, response: Response, db: DbSessionDep) -> UserPublic:
+    check_rate_limit(request, endpoint="register")
+    existing_user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
+    if existing_user:
+        # Silent 201 to prevent email enumeration.
+        logger.info("register: email already in use (silent), email=%s", payload.email)
+        return UserPublic.model_validate(existing_user)
 
     user = User(
         email=payload.email,
@@ -188,6 +192,11 @@ async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPubli
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    # Issue auth cookies immediately — no second /login request needed
+    _set_auth_cookie(response, create_access_token(str(user.id)))
+    _set_refresh_cookie(response, create_refresh_token(str(user.id)))
+
     token = create_email_verification_token(user.email)
     verify_link = f"{settings.backend_url}/auth/verify-email?token={token}"
     send_email_verification_email(user.email, verify_link)
@@ -201,6 +210,7 @@ async def login_user(
     db: DbSessionDep,
     request: Request,
 ) -> UserPublic:
+    check_rate_limit(request, endpoint="login")
     request_id = request.headers.get("X-Request-Id")
     client_host = request.client.host if request.client else None
     logger.info(

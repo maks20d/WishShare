@@ -1,8 +1,6 @@
 import json
 import os
-from typing import Any
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -12,52 +10,16 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     environment: str = "local"
 
-    # Store as string, parse manually to avoid pydantic parsing issues
     backend_cors_origins_raw: str = ""
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "allow"  # Allow extra fields from environment
 
-    @property
-    def backend_cors_origins(self) -> list[str]:
-        """Parse CORS origins from raw string."""
-        # First try to get from environment variable directly
-        raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
-        if not raw:
-            return ["http://localhost:3000", "http://127.0.0.1:3000"]
-
-        # Handle JSON array format
-        if raw.startswith("["):
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    return [str(item).strip() for item in parsed if str(item).strip()]
-            except Exception:
-                pass
-
-        # Handle comma-separated format
-        return [item.strip() for item in raw.split(",") if item.strip()]
-
-    # Database configuration
-    # For development: sqlite+aiosqlite:///./wishshare.db
-    # For production: postgresql+asyncpg://user:password@localhost/wishshare
+    # Database: sqlite+aiosqlite:///./wishshare.db (dev) | postgresql+asyncpg://... (prod)
     postgres_dsn: str = "sqlite+aiosqlite:///./wishshare.db"
-    
-    # For PostgreSQL configuration, use:
-    # postgres_user: str = "wishshare"
-    # postgres_password: str = "password"
-    # postgres_host: str = "localhost"
-    # postgres_port: int = 5432
-    # postgres_db: str = "wishshare"
-    # And construct DSN as: postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}
-    
     redis_dsn: str = "redis://localhost:6379/0"
 
     access_token_expire_minutes: int = 60 * 24 * 7
     refresh_token_expire_minutes: int = 60 * 24 * 30
     password_reset_token_expire_minutes: int = 30
+    # SECURITY: override via JWT_SECRET_KEY env var; app refuses to start with default
     jwt_secret_key: str = "CHANGE_ME"
     jwt_algorithm: str = "HS256"
 
@@ -67,7 +29,7 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
 
-    # SMTP settings (optional, for password reset emails)
+    # SMTP settings (optional)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -75,7 +37,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = "noreply@wishshare.local"
     smtp_use_tls: bool = True
 
-    # Parser/browser fallback (for anti-bot protected marketplaces)
+    # Parser / browser fallback
     parser_browser_fallback: bool = True
     parser_browser_domains: str = (
         "ozon.ru,wildberries.ru,wb.ru,lamoda.ru,dns-shop.ru,"
@@ -85,9 +47,45 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    # Single model_config — fixes the duplicate inner `class Config` bug
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "allow",
+    }
+
+    @property
+    def backend_cors_origins(self) -> list[str]:
+        """Parse CORS origins from raw string or env var."""
+        raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
+        if not raw:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                pass
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @property
+    def allowed_parser_domains(self) -> set[str]:
+        """Domains the URL parser is allowed to fetch (SSRF allowlist)."""
+        return {d.strip() for d in self.parser_browser_domains.split(",") if d.strip()}
+
+    def validate_secrets(self) -> None:
+        """Refuse to start with insecure defaults."""
+        if self.jwt_secret_key == "CHANGE_ME":
+            raise RuntimeError(
+                "JWT_SECRET_KEY is still the default 'CHANGE_ME'. "
+                "Set a strong random secret via the JWT_SECRET_KEY environment variable."
+            )
+        if len(self.jwt_secret_key) < 32:
+            raise RuntimeError(
+                f"JWT_SECRET_KEY is too short ({len(self.jwt_secret_key)} chars). "
+                "Minimum 32 characters required."
+            )
 
 
 settings = Settings()
