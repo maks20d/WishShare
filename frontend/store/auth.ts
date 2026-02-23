@@ -61,12 +61,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   register: async (name, email, password) => {
     set({ loading: true });
     try {
-      const user = await api.post<User>("/auth/register", {
-        name,
-        email,
-        password
-      });
-      await api.post("/auth/login", { email, password });
+      // /register now sets auth cookies directly — no second /login request needed
+      const user = await api.post<User>("/auth/register", { name, email, password });
       set({ user, loading: false });
     } catch (e) {
       const err = e as ApiError;
