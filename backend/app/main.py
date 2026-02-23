@@ -1,3 +1,9 @@
+# Fix for Python 3.13+ on Windows - must be before any asyncio usage
+import sys
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from time import perf_counter
@@ -16,8 +22,21 @@ from app.core.config import settings
 from app.core.logger import configure_logging
 from app.db.session import Base, engine
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+
 
 logger = configure_logging()
+
+# Initialize Sentry (optional - only if DSN is configured)
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=0.1,
+        environment=settings.environment,
+    )
+    logger.info("Sentry initialized for environment=%s", settings.environment)
 
 app = FastAPI(
     title=settings.app_name,
@@ -125,6 +144,34 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    insecure_secrets = (
+        "CHANGE_ME",
+        "your-secret-key-here-change-in-production",
+        "secret",
+        "jwt_secret",
+        "changeme",
+    )
+    
+    if settings.environment != "local":
+        if not settings.jwt_secret_key or settings.jwt_secret_key in insecure_secrets:
+            logger.critical(
+                "CRITICAL: JWT_SECRET_KEY is not set or using insecure value! "
+                "Generate a secure key with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+            )
+            raise RuntimeError("JWT_SECRET_KEY must be set to a secure random value")
+        
+        if len(settings.jwt_secret_key) < 32:
+            logger.warning(
+                "JWT_SECRET_KEY is shorter than 32 characters. "
+                "Recommended length is 64+ characters for security."
+            )
+    
+    if settings.jwt_secret_key in insecure_secrets:
+        logger.warning(
+            "JWT_SECRET_KEY is using a default/insecure value. "
+            "This is OK for local development but MUST be changed for production."
+        )
+
     try:
         import asyncio
 
@@ -303,6 +350,12 @@ async def get_metrics() -> dict[str, object]:
     }
 
 
+@app.get("/metrics/rate-limit")
+async def get_rate_limit_stats() -> dict[str, object]:
+    from app.core.rate_limit import limiter
+    return limiter.get_stats()
+
+
 def _handle_async_exception(loop, context) -> None:
     message = context.get("message", "Async error")
     exc = context.get("exception")
@@ -310,16 +363,6 @@ def _handle_async_exception(loop, context) -> None:
         logger.exception("Async error: %s", message, exc_info=exc)
     else:
         logger.error("Async error: %s", message)
-
-
-# Global exception handler for better error logging
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception occurred for %s %s", request.method, request.url)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error", "error_type": type(exc).__name__, "error_msg": str(exc)}
-    )
 
 
 # Health check endpoint for debugging

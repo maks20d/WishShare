@@ -34,7 +34,7 @@ def test_login_cookie_flags_prod():
         assert "access_token=" in set_cookie
         assert "HttpOnly" in set_cookie
         assert "Secure" in set_cookie
-        assert "SameSite=None" in set_cookie
+        assert "samesite=none" in set_cookie.lower()
     finally:
         settings.environment = prev_env
         settings.backend_url = prev_backend
@@ -65,7 +65,9 @@ def test_auth_me_expired_token():
     assert login_res.status_code == 200
     user_id = login_res.json().get("id")
     expired = create_access_token(str(user_id), expires_delta_minutes=-1)
-    res = client.get("/auth/me", headers={"Authorization": f"Bearer {expired}"})
+    # Create a new client without cookies to test only Bearer token
+    fresh_client = TestClient(app)
+    res = fresh_client.get("/auth/me", headers={"Authorization": f"Bearer {expired}"})
     assert res.status_code == 401
 
 

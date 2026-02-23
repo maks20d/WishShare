@@ -11,24 +11,20 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
     environment: str = "local"
-
-    # Store as string, parse manually to avoid pydantic parsing issues
-    backend_cors_origins_raw: str = ""
+    backend_cors_origins_raw: str = ""  # Comma-separated or JSON array
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "allow"  # Allow extra fields from environment
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "allow",
+    }
 
     @property
     def backend_cors_origins(self) -> list[str]:
         """Parse CORS origins from raw string."""
-        # First try to get from environment variable directly
         raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
         if not raw:
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
-
-        # Handle JSON array format
         if raw.startswith("["):
             try:
                 parsed = json.loads(raw)
@@ -36,23 +32,9 @@ class Settings(BaseSettings):
                     return [str(item).strip() for item in parsed if str(item).strip()]
             except Exception:
                 pass
-
-        # Handle comma-separated format
         return [item.strip() for item in raw.split(",") if item.strip()]
 
-    # Database configuration
-    # For development: sqlite+aiosqlite:///./wishshare.db
-    # For production: postgresql+asyncpg://user:password@localhost/wishshare
     postgres_dsn: str = "sqlite+aiosqlite:///./wishshare.db"
-    
-    # For PostgreSQL configuration, use:
-    # postgres_user: str = "wishshare"
-    # postgres_password: str = "password"
-    # postgres_host: str = "localhost"
-    # postgres_port: int = 5432
-    # postgres_db: str = "wishshare"
-    # And construct DSN as: postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}
-    
     redis_dsn: str = "redis://localhost:6379/0"
 
     access_token_expire_minutes: int = 60 * 24 * 7
@@ -61,21 +43,24 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "CHANGE_ME"
     jwt_algorithm: str = "HS256"
 
-    # OAuth settings
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""
     github_client_secret: str = ""
 
-    # SMTP settings (optional, for password reset emails)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_from_email: str = "noreply@wishshare.local"
     smtp_use_tls: bool = True
+    email_notifications_enabled: bool = True
 
-    # Parser/browser fallback (for anti-bot protected marketplaces)
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 10
+    rate_limit_window_seconds: int = 60
+    rate_limit_login_requests: int = 5
+
     parser_browser_fallback: bool = True
     parser_browser_domains: str = (
         "ozon.ru,wildberries.ru,wb.ru,lamoda.ru,dns-shop.ru,"
@@ -85,9 +70,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    sentry_dsn: str | None = None
 
 
 settings = Settings()

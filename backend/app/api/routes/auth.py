@@ -12,6 +12,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.deps import DbSessionDep, get_current_user
 from app.core.mailer import send_email_verification_email, send_password_reset_email
 from app.core.config import settings
+from app.core.rate_limit import check_rate_limit
+from app.core.audit import (
+    audit_login_success,
+    audit_login_failed,
+    audit_logout,
+    audit_register,
+    audit_password_change,
+    audit_password_reset_request,
+    audit_oauth_login,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -175,7 +185,14 @@ def _validate_oauth_state(
 
 
 @router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
-async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPublic:
+async def register_user(
+    payload: RegisterRequest,
+    db: DbSessionDep,
+    request: Request,
+) -> UserPublic:
+    # Rate limit registration to prevent spam
+    check_rate_limit(request, max_requests=5, window_seconds=300, key_suffix="register")
+    
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
@@ -191,6 +208,7 @@ async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPubli
     token = create_email_verification_token(user.email)
     verify_link = f"{settings.backend_url}/auth/verify-email?token={token}"
     send_email_verification_email(user.email, verify_link)
+    audit_register(request, user.id, user.email)
     return UserPublic.model_validate(user)
 
 
@@ -201,6 +219,9 @@ async def login_user(
     db: DbSessionDep,
     request: Request,
 ) -> UserPublic:
+    # Rate limit login to prevent brute force (5 attempts per minute)
+    check_rate_limit(request, max_requests=settings.rate_limit_login_requests, window_seconds=60, key_suffix="login")
+    
     request_id = request.headers.get("X-Request-Id")
     client_host = request.client.host if request.client else None
     logger.info(
@@ -227,6 +248,7 @@ async def login_user(
 
     if not user:
         logger.info("Auth login user not found id=%s email=%s", request_id, payload.email)
+        audit_login_failed(request, payload.email, "user_not_found")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь не найден. Зарегистрируйтесь.",
@@ -245,6 +267,7 @@ async def login_user(
         )
     if not password_ok:
         logger.info("Auth login invalid password id=%s user_id=%s", request_id, user.id)
+        audit_login_failed(request, payload.email, "invalid_password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Неверный пароль.",
@@ -254,6 +277,7 @@ async def login_user(
     refresh_token = create_refresh_token(str(user.id))
     _set_auth_cookie(response, token)
     _set_refresh_cookie(response, refresh_token)
+    audit_login_success(request, user.id, user.email)
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
 
@@ -569,7 +593,14 @@ async def oauth_github_callback(
 
 
 @router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
-async def forgot_password(payload: ForgotPasswordRequest, db: DbSessionDep) -> None:
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: DbSessionDep,
+    request: Request,
+) -> None:
+    # Rate limit password reset requests (3 per 5 minutes)
+    check_rate_limit(request, max_requests=3, window_seconds=300, key_suffix="forgot")
+    
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:
@@ -578,6 +609,7 @@ async def forgot_password(payload: ForgotPasswordRequest, db: DbSessionDep) -> N
     token = create_password_reset_token(user.email)
     reset_link = f"{settings.frontend_url}/auth/reset-password?token={token}"
     send_password_reset_email(user.email, reset_link)
+    audit_password_reset_request(request, user.email, exists=True)
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)

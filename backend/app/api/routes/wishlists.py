@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
+import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
@@ -7,9 +8,18 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DbSessionDep, get_current_user, get_optional_user
+from app.core.config import settings
+from app.core.mailer import (
+    send_gift_reserved_email,
+    send_gift_unreserved_email,
+    send_contribution_email,
+)
 from app.models.models import Contribution, Gift, PrivacyLevelEnum, Reservation, User, Wishlist, WishlistAccessEmail
 from app.realtime.manager import manager
 from uuid import uuid4
+
+
+logger = logging.getLogger("wishshare.wishlists")
 from app.schemas.wishlist import (
     ContributionCreate,
     GiftBase,
@@ -440,7 +450,7 @@ async def create_wishlist(
         privacy=payload.privacy.value if hasattr(payload.privacy, "value") else payload.privacy,
         is_secret_santa=payload.is_secret_santa,
         slug=slug,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         public_token=str(uuid4()),
     )
     normalized_emails = _normalize_access_emails(payload.access_emails)
@@ -733,6 +743,24 @@ async def reserve_gift(
         payload_for_public=_ws_gift_payload(gift, public_view, "public"),
     )
 
+    # Send email notification to wishlist owner
+    if settings.email_notifications_enabled:
+        try:
+            owner_result = await db.execute(select(User).where(User.id == gift.wishlist.owner_id))
+            owner = owner_result.scalar_one_or_none()
+            if owner and owner.email:
+                wishlist_link = f"{settings.frontend_url}/wishlist/{gift.wishlist.slug}"
+                send_gift_reserved_email(
+                    to_email=owner.email,
+                    gift_title=gift.title,
+                    wishlist_title=gift.wishlist.title,
+                    wishlist_link=wishlist_link,
+                    reserved_by_name=current_user.name if not gift.wishlist.is_secret_santa else None,
+                    is_secret_santa=gift.wishlist.is_secret_santa,
+                )
+        except Exception as e:
+            logger.warning("Failed to send reservation notification email: %s", e)
+
     return _serialize_gift(
         gift,
         total_contributions=total_contributions,
@@ -796,6 +824,22 @@ async def cancel_reservation(
         payload_for_friend=_ws_gift_payload(gift, friend_view, "friend"),
         payload_for_public=_ws_gift_payload(gift, public_view, "public"),
     )
+
+    # Send email notification to wishlist owner
+    if settings.email_notifications_enabled:
+        try:
+            owner_result = await db.execute(select(User).where(User.id == gift.wishlist.owner_id))
+            owner = owner_result.scalar_one_or_none()
+            if owner and owner.email:
+                wishlist_link = f"{settings.frontend_url}/wishlist/{gift.wishlist.slug}"
+                send_gift_unreserved_email(
+                    to_email=owner.email,
+                    gift_title=gift.title,
+                    wishlist_title=gift.wishlist.title,
+                    wishlist_link=wishlist_link,
+                )
+        except Exception as e:
+            logger.warning("Failed to send unreserve notification email: %s", e)
 
     return _serialize_gift(
         gift,
@@ -912,6 +956,27 @@ async def contribute_to_gift(
         payload_for_friend=_ws_gift_payload(gift, friend_view, "friend"),
         payload_for_public=_ws_gift_payload(gift, public_view, "public"),
     )
+
+    # Send email notification to wishlist owner
+    if settings.email_notifications_enabled:
+        try:
+            owner_result = await db.execute(select(User).where(User.id == gift.wishlist.owner_id))
+            owner = owner_result.scalar_one_or_none()
+            if owner and owner.email:
+                wishlist_link = f"{settings.frontend_url}/wishlist/{gift.wishlist.slug}"
+                send_contribution_email(
+                    to_email=owner.email,
+                    gift_title=gift.title,
+                    wishlist_title=gift.wishlist.title,
+                    wishlist_link=wishlist_link,
+                    contribution_amount=float(payload.amount),
+                    total_collected=total_contributions,
+                    target_amount=float(gift.price) if gift.price else 0.0,
+                    contributor_name=current_user.name if not gift.wishlist.is_secret_santa else None,
+                    is_secret=gift.wishlist.is_secret_santa,
+                )
+        except Exception as e:
+            logger.warning("Failed to send contribution notification email: %s", e)
 
     return _serialize_gift(
         gift,

@@ -1,0 +1,2110 @@
+diff --git a/.env.example b/.env.example
+index 0e8488f..7c060ce 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,42 +1,38 @@
+- # Backend Configuration
+-APP_NAME=WishShare API
+-# Set to "production" when deploying to Render/Vercel for proper cookie settings
+-ENVIRONMENT=local
++# ============================================================
++# WishShare — Environment Configuration
++# Copy this file to .env and fill in the values.
++# ============================================================
++
++# ---- Application URLs ----
+ BACKEND_URL=http://localhost:8000
+ FRONTEND_URL=http://localhost:3000
+ 
+-# CORS Origins (comma-separated)
+-# Note: *.vercel.app domains are automatically allowed via regex pattern
+-# Add your production frontend URL and any other static domains here
+-BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
+-
+-# Database Configuration
+-# Using PostgreSQL:
+-POSTGRES_DSN=postgresql+asyncpg://wishshare:password@localhost:5432/wishshare
++# Comma-separated list of allowed CORS origins (must include frontend URL)
++BACKEND_CORS_ORIGINS=http://localhost:3000
+ 
+-# Or SQLite for quick local development:
+-# POSTGRES_DSN=sqlite+aiosqlite:///./wishshare.db
+-
+-# Redis Configuration
+-REDIS_DSN=redis://localhost:6379/0
++# ---- Environment ----
++# "local" uses SameSite=Lax cookies (HTTP-safe)
++# "production" uses SameSite=None; Secure cookies (required for cross-origin HTTPS)
++ENVIRONMENT=local
+ 
+-# JWT Configuration
+-JWT_SECRET_KEY=your-secret-key-here-change-in-production
+-JWT_ALGORITHM=HS256
+-ACCESS_TOKEN_EXPIRE_MINUTES=10080
+-PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
++# ---- Database ----
++# SQLite (development):
++POSTGRES_DSN=sqlite+aiosqlite:///./wishshare.db
++# PostgreSQL (production, uncomment and fill):
++# POSTGRES_DSN=postgresql+asyncpg://wishshare:password@localhost:5432/wishshare
+ 
+-# OAuth Configuration - Google
+-# Get credentials from: https://console.cloud.google.com/
+-GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+-GOOGLE_CLIENT_SECRET=your-google-client-secret
++# ---- Security (REQUIRED IN PRODUCTION) ----
++# Generate with: openssl rand -hex 32
++# MUST be at least 32 characters. App will refuse to start with the default value.
++JWT_SECRET_KEY=CHANGE_ME
+ 
+-# OAuth Configuration - GitHub
+-# Get credentials from: https://github.com/settings/developers
+-GITHUB_CLIENT_ID=your-github-client-id
+-GITHUB_CLIENT_SECRET=your-github-client-secret
++# ---- OAuth (optional) ----
++GOOGLE_CLIENT_ID=
++GOOGLE_CLIENT_SECRET=
++GITHUB_CLIENT_ID=
++GITHUB_CLIENT_SECRET=
+ 
+-# SMTP Configuration (optional, for password reset emails)
++# ---- Email / SMTP (optional, for password reset) ----
+ SMTP_HOST=
+ SMTP_PORT=587
+ SMTP_USERNAME=
+@@ -44,8 +40,12 @@ SMTP_PASSWORD=
+ SMTP_FROM_EMAIL=noreply@wishshare.local
+ SMTP_USE_TLS=true
+ 
+-# Optional browser fallback for anti-bot marketplaces (Ozon/Wildberries/Lamoda/etc)
+-# Requires: pip install playwright && playwright install chromium
++# ---- Parser settings ----
++# Comma-separated list of domains the URL parser is allowed to fetch (SSRF allowlist)
++PARSER_BROWSER_DOMAINS=ozon.ru,wildberries.ru,wb.ru,lamoda.ru,dns-shop.ru,market.yandex.ru,yandex.ru,aliexpress.com,aliexpress.ru,amazon.com,amazon.ru
+ PARSER_BROWSER_FALLBACK=true
+-PARSER_BROWSER_DOMAINS=ozon.ru,wildberries.ru,lamoda.ru,aliexpress.com,amazon.com,amazon.ru
+ PARSER_BROWSER_TIMEOUT_MS=45000
++
++# ---- Logging ----
++LOG_LEVEL=INFO
++# LOG_FILE=/var/log/wishshare.log
+diff --git a/DEPLOY.md b/DEPLOY.md
+deleted file mode 100644
+index 256912b..0000000
+--- a/DEPLOY.md
++++ /dev/null
+@@ -1,160 +0,0 @@
+-## 🚀 Деплой WishShare
+-
+-Ниже — один из простых вариантов, остаёмся в рамках текущего ТЗ (FastAPI + Next.js).
+-
+----
+-
+-### Вариант 1: Backend на Render, Frontend на Vercel (рекомендуется)
+-
+-Полный чеклист: `DEPLOY_RENDER_VERCEL.md`.
+-
+-#### 1. Подготовка репозитория
+-- Создайте репозиторий на GitHub, GitLab или Bitbucket.
+-- Добавьте в репозиторий папки `backend/` и `frontend/` (всё, что у вас сейчас локально).
+-- Закоммитьте и запушьте код.
+-
+-```bash
+-git init
+-git add .
+-git commit -m "Initial WishShare project"
+-git remote add origin <URL_ВАШЕГО_REPO>
+-git push -u origin main
+-```
+-
+-#### 2. Backend (FastAPI) на Render
+-
+-1. Зайдите на `https://render.com` и залогиньтесь через GitHub.
+-2. Создайте **New +** → **Web Service**.
+-3. Выберите ваш репозиторий.
+-4. Настройки:
+-   - **Root Directory**: `backend`
+-   - **Environment**: `Python`
+-   - **Build Command**: `pip install -r requirements.txt`
+-   - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+-   - **Instance Type**: Free (для начала можно Free)
+-5. В разделе **Environment Variables**:
+-   - Скопируйте значения из вашего локального `.env.example` в переменные Render.
+-   - Обязательно задайте:
+-     - `POSTGRES_DSN` (если используете PostgreSQL на Render)
+-     - `JWT_SECRET_KEY` (случайная строка)
+-     - `BACKEND_URL` (можно не указывать, FastAPI сам вернёт URL)
+-6. Нажмите **Create Web Service** и дождитесь деплоя.
+-
+-В итоге вы получите `https://<your-backend>.onrender.com`.
+-
+-#### 3. Frontend (Next.js) на Vercel
+-
+-1. Перейдите на `https://vercel.com` и залогиньтесь через GitHub.
+-2. Нажмите **New Project** → выберите ваш репозиторий.
+-3. В настройках проекта:
+-   - **Root Directory**: `frontend`
+-   - **Framework Preset**: `Next.js`
+-4. В **Environment Variables**:
+-   - `NEXT_PUBLIC_API_BASE_URL` = URL вашего backend на Render, например:
+-
+-     `https://<your-backend>.onrender.com`
+-   - `NEXT_PUBLIC_WS_BASE_URL` = WebSocket URL backend, например:
+-
+-     `wss://<your-backend>.onrender.com/ws`
+-
+-5. Нажмите **Deploy**.
+-
+-После деплоя у вас будет ссылка вида `https://your-wishshare-frontend.vercel.app`, которой можно делиться с друзьями.
+-
+----
+-
+-### Вариант 2: Свой VPS + Docker (кратко)
+-
+-Если хотите всё держать на одном сервере:
+-
+-1. Возьмите VPS (Hetzner / DigitalOcean / любой провайдер).
+-2. Установите Docker + Docker Compose.
+-3. Создайте `docker-compose.yml` (упрощённый пример):
+-
+-```yaml
+-version: "3.9"
+-services:
+-  backend:
+-    build: ./backend
+-    environment:
+-      - POSTGRES_DSN=postgresql+asyncpg://user:pass@db:5432/wishshare
+-      - JWT_SECRET_KEY=super-secret
+-      - BACKEND_URL=https://your-domain.com/api
+-    ports:
+-      - "8000:8000"
+-
+-  frontend:
+-    build: ./frontend
+-    environment:
+-      - NEXT_PUBLIC_API_BASE_URL=/api
+-      - NEXT_PUBLIC_WS_BASE_URL=/ws
+-    ports:
+-      - "3000:3000"
+-
+-  db:
+-    image: postgres:16
+-    environment:
+-      POSTGRES_USER: user
+-      POSTGRES_PASSWORD: pass
+-      POSTGRES_DB: wishshare
+-    volumes:
+-      - db_data:/var/lib/postgresql/data
+-
+-volumes:
+-  db_data:
+-```
+-
+-4. Настройте nginx/traefik и домен, чтобы:
+-   - `https://your-domain.com` → frontend (порт 3000)
+-   - `https://your-domain.com/api` → backend (порт 8000)
+-   - `https://your-domain.com/ws` → backend WebSocket (порт 8000)
+-
+----
+-
+-### Почему сервис загружается долго?
+-
+-Разделим на два кейса:
+-
+-#### 1. Первый запуск локально через `start.bat`
+-
+-При самом первом запуске скрипт делает тяжёлые операции:
+-- Создаёт виртуальное окружение Python
+-- Устанавливает все зависимости бэкенда (`pip install -r requirements.txt`)
+-- Устанавливает Playwright и качает Chromium (~140 MB)
+-- Устанавливает зависимости фронтенда (`npm install`)
+-- Next.js делает первый билд dev-сервера
+-
+-Это *нормально* занимает:
+-- 3–10 минут на слабой машине
+-- 1–3 минуты на более мощной
+-
+-Повторные запуски (когда venv и node_modules уже есть) должны занимать:
+-- ~5–15 секунд до Ready для бэкенда
+-- ~10–30 секунд до Ready для фронтенда (Next dev)
+-
+-#### 2. Медленная загрузка сайта в браузере
+-
+-Причины могут быть:
+-- Тяжёлый JS-бандл (Next dev-режим грузит много debug-кода)
+-- Отсутствие продакшн-сборки (нужен `next build` и `next start`)
+-- Первичная инициализация React Query / Zustand
+-- Подключение шрифтов и стилей
+-
+-**Как ускорить:**
+-- Для продакшена обязательно использовать:
+-
+-```bash
+-cd frontend
+-npm run build
+-npm start
+-```
+-
+-- В dev-режиме считать, что это нормально, что всё чуть тяжелее.
+-
+----
+-
+-### Резюме
+-
+-- **Единая точка входа для деплоя**: Render (backend) + Vercel (frontend).
+-- **Локальный запуск**: `start.bat` (Windows) / `start.sh` (Linux/Mac) / `start.py`.
+-- **Долгая загрузка при первом запуске** — в основном из‑за установки зависимостей и Playwright; последующие запуски будут существенно быстрее.
+diff --git a/DEPLOYMENT.md b/DEPLOYMENT.md
+index 930c5b7..71f5007 100644
+--- a/DEPLOYMENT.md
++++ b/DEPLOYMENT.md
+@@ -1,375 +1,75 @@
+-# WishShare - Руководство по развертыванию
++# WishShare — Deployment Guide
+ 
+-## Обзор
++Этот файл заменяет DEPLOY.md, DEPLOY_RENDER_VERCEL.md и старый DEPLOYMENT.md.
+ 
+-WishShare поддерживает несколько способов развертывания:
+-
+-1. **Локальная разработка** - с помощью улучшенного скрипта `start.py`
+-2. **Docker контейнеры** - для разработки и production
+-3. **CI/CD автоматизация** - через GitHub Actions
+-4. **Ручной деплой** - с помощью скриптов развертывания
+-
+-## 🚀 Быстрый старт
+-
+-### Локальная разработка
+-
+-```bash
+-# Кроссплатформенный запуск
+-python start.py
+-
+-# С дополнительными опциями
+-python start.py --production --with-postgres --auto-restart
+-
+-# Проверка зависимостей
+-python start.py --check-only
+-```
+-
+-### Docker разработка
+-
+-```bash
+-# Development окружение
+-docker-compose -f docker-compose.dev.yml up -d
+-
+-# Production окружение
+-docker-compose up -d
+-```
+-
+-## 📋 Требования
+-
+-### Для локальной разработки
+-- Python 3.11+
+-- Node.js 20.9+
+-- Git
+-
+-### Для Docker развертывания
+-- Docker 20.10+
+-- Docker Compose 2.0+
+-
+-### Для production
+-- PostgreSQL 15+
+-- Redis 7+
+-- Nginx (опционально)
+-
+-## 🔧 Конфигурация
+-
+-### Переменные окружения
+-
+-Скопируйте `.env.example` в `.env` и настройте:
++## Быстрый старт (локально)
+ 
+ ```bash
+ cp .env.example .env
++# Заполните .env (особенно JWT_SECRET_KEY — минимум 32 символа!)
++docker compose up --build
+ ```
+ 
+-**Основные настройки:**
+-```env
+-# База данных
+-POSTGRES_DSN=postgresql+asyncpg://user:pass@host:5432/db
++Фронтенд: http://localhost:3000  
++Бэкенд API: http://localhost:8000/docs
+ 
+-# Redis
+-REDIS_DSN=redis://localhost:6379/0
++## Переменные окружения (обязательные)
+ 
+-# JWT
+-JWT_SECRET_KEY=your-secret-key-here
++| Переменная | Описание |
++|---|---|
++| `JWT_SECRET_KEY` | Случайная строка ≥32 символов. `openssl rand -hex 32` |
++| `BACKEND_URL` | URL бэкенда (напр. `https://api.wishshare.app`) |
++| `FRONTEND_URL` | URL фронтенда (напр. `https://wishshare.app`) |
++| `BACKEND_CORS_ORIGINS` | Домен фронтенда через запятую |
++| `POSTGRES_DSN` | `postgresql+asyncpg://user:pass@host:5432/db` (prod) |
+ 
+-# Frontend публичные URL
+-NEXT_PUBLIC_API_BASE_URL=https://your-domain.com/api
+-NEXT_PUBLIC_WS_BASE_URL=wss://your-domain.com/ws
++## Production: Vercel (Frontend) + Render (Backend)
+ 
+-# OAuth (опционально)
+-GOOGLE_CLIENT_ID=your-google-client-id
+-GOOGLE_CLIENT_SECRET=your-google-client-secret
+-GITHUB_CLIENT_ID=your-github-client-id
+-GITHUB_CLIENT_SECRET=your-github-client-secret
+-```
+-
+-## 🐳 Docker развертывание
+-
+-### Development
++### Backend на Render
+ 
+-```bash
+-# Запуск development окружения
+-docker-compose -f docker-compose.dev.yml up -d
+-
+-# Просмотр логов
+-docker-compose -f docker-compose.dev.yml logs -f
++1. Создать Web Service из репозитория, корень: `backend/`
++2. Build Command: `pip install -r requirements.txt`
++3. Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
++4. Добавить env vars (см. таблицу выше)
++5. Добавить PostgreSQL database addon
+ 
+-# Остановка
+-docker-compose -f docker-compose.dev.yml down
+-```
++### Frontend на Vercel
+ 
+-**Development включает:**
+-- Backend с hot reload
+-- Frontend с hot reload
+-- Redis для кэширования
+-- SQLite базу данных
++1. Import репозитория, root directory: `frontend/`
++2. Добавить переменные:
++   - `NEXT_PUBLIC_BACKEND_URL` = URL вашего Render-сервиса
+ 
+-### Production
++### Кросс-доменные cookie (CORS)
+ 
+-```bash
+-# Запуск production окружения
+-docker-compose up -d
++При разных доменах фронта и бэка обязательно:
++- `BACKEND_CORS_ORIGINS` = `https://your-frontend.vercel.app`
++- Backend должен быть на HTTPS (Render — автоматически)
++- Запросы с `credentials: "include"` (уже настроено)
++- Cookie: `SameSite=None; Secure` (уже настроено для `environment=production`)
+ 
+-# Просмотр логов
+-docker-compose logs -f
++### Установить `environment=production` на бэкенде
+ 
+-# Остановка
+-docker-compose down
+ ```
+-
+-**Production включает:**
+-- PostgreSQL базу данных
+-- Redis для кэширования
+-- Nginx reverse proxy
+-- Health checks
+-- Автоматический перезапуск
+-
+-### Управление контейнерами
+-
+-```bash
+-# Статус контейнеров
+-docker-compose ps
+-
+-# Перезапуск сервисов
+-docker-compose restart
+-
+-# Обновление образов
+-docker-compose pull
+-docker-compose up -d
+-
+-# Очистка
+-docker system prune -f
++ENVIRONMENT=production
+ ```
+ 
+-## 🔄 CI/CD
+-
+-### GitHub Actions
+-
+-Проект включает готовый CI/CD пайплайн:
+-
+-**Что делает пайплайн:**
+-1. **Тестирование** - автоматические тесты для backend и frontend
+-2. **Сборка** - создание Docker образов
+-3. **Security scan** - проверка уязвимостей
+-4. **Деплой** - автоматический деплой в staging/production
+-
+-**Ветки:**
+-- `develop` → автоматический деплой в staging
+-- `main` → автоматический деплой в production
+-
+-**Требования:**
+-- Настроить GitHub secrets для production
+-- Настроить доступ к серверу деплоя
++## Docker Compose (production)
+ 
+-## 📦 Скрипты развертывания
+-
+-### Автоматический деплой
+-
+-**Linux/Mac:**
+ ```bash
+-# Деплой в staging
+-./deploy.sh staging
+-
+-# Деплой в production
+-./deploy.sh production
+-
+-# Пропустить тесты
+-./deploy.sh production --skip-tests
+-
+-# Принудительный деплой (без бэкапа)
+-./deploy.sh production --force
++docker compose -f docker-compose.yml up -d
+ ```
+ 
+-**Windows:**
+-```batch
+-REM Деплой в staging
+-deploy.bat staging
+-
+-REM Деплой в production
+-deploy.bat production
+-```
+-
+-**Что делают скрипты:**
+-1. Проверяют зависимости
+-2. Создают бэкап базы данных (production)
+-3. Запускают тесты
+-4. Собирают Docker образы
+-5. Останавливают старые контейнеры
+-6. Запускают новые контейнеры
+-7. Проверяют здоровье сервисов
+-8. Очищают старые образы
+-
+-## 🌐 Production настройка
+-
+-### Подготовка сервера
++## Генерация безопасного JWT_SECRET_KEY
+ 
+ ```bash
+-# Установка Docker
+-curl -fsSL https://get.docker.com -o get-docker.sh
+-sudo sh get-docker.sh
+-
+-# Установка Docker Compose
+-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+-sudo chmod +x /usr/local/bin/docker-compose
++openssl rand -hex 32
++# или
++python3 -c "import secrets; print(secrets.token_hex(32))"
+ ```
+ 
+-### Настройка Nginx (опционально)
+-
+-```nginx
+-# /etc/nginx/sites-available/wishshare
+-server {
+-    listen 80;
+-    server_name your-domain.com;
+-
+-    location / {
+-        proxy_pass http://localhost:3000;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-    }
+-
+-    location /api {
+-        proxy_pass http://localhost:8000;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-    }
+-
+-    location /ws {
+-        proxy_pass http://localhost:8000;
+-        proxy_http_version 1.1;
+-        proxy_set_header Upgrade $http_upgrade;
+-        proxy_set_header Connection "upgrade";
+-        proxy_set_header Host $host;
+-    }
+-}
+-```
+-
+-### SSL сертификаты
+-
+-```bash
+-# Установка Certbot
+-sudo apt install certbot python3-certbot-nginx
+-
+-# Получение сертификата
+-sudo certbot --nginx -d your-domain.com
+-```
+-
+-## 🔍 Мониторинг
+-
+-### Health checks
+-
+-```bash
+-# Проверка здоровья сервисов
+-curl http://localhost:8000/health
+-curl http://localhost:3000
+-
+-# Docker health checks
+-docker-compose ps
+-```
+-
+-### Логи
++## Миграции базы данных
+ 
+ ```bash
+-# Просмотр всех логов
+-docker-compose logs -f
+-
+-# Просмотр логов конкретного сервиса
+-docker-compose logs -f backend
+-docker-compose logs -f frontend
+-docker-compose logs -f postgres
++cd backend
++alembic upgrade head
+ ```
+-
+-### Метрики
+-
+-Проект включает встроенные health checks:
+-- Backend: `/health` эндпоинт
+-- Frontend: HTTP статус 200
+-- Database: PostgreSQL health check
+-- Redis: Redis ping
+-
+-## 🛠️ Устранение проблем
+-
+-### Частые проблемы
+-
+-**1. Порты заняты**
+-```bash
+-# Проверка занятых портов
+-netstat -tulpn | grep :8000
+-netstat -tulpn | grep :3000
+-
+-# Изменение портов в docker-compose.yml
+-```
+-
+-**2. Проблемы с базой данных**
+-```bash
+-# Проверка статуса PostgreSQL
+-docker-compose exec postgres pg_isready
+-
+-# Сброс базы данных
+-docker-compose down -v
+-docker-compose up -d postgres
+-```
+-
+-**3. Проблемы с Redis**
+-```bash
+-# Проверка Redis
+-docker-compose exec redis redis-cli ping
+-
+-# Сброс Redis
+-docker-compose restart redis
+-```
+-
+-**4. Проблемы с памятью**
+-```bash
+-# Очистка Docker
+-docker system prune -a -f
+-
+-# Увеличение swap
+-sudo fallocate -l 2G /swapfile
+-sudo chmod 600 /swapfile
+-sudo mkswap /swapfile
+-sudo swapon /swapfile
+-```
+-
+-### Резервное копирование
+-
+-```bash
+-# Бэкап базы данных
+-docker exec wishshare-postgres pg_dump -U wishshare wishshare > backup.sql
+-
+-# Восстановление
+-docker exec -i wishshare-postgres psql -U wishshare wishshare < backup.sql
+-
+-# Автоматический бэкап
+-echo "0 2 * * * docker exec wishshare-postgres pg_dump -U wishshare wishshare > /backups/backup_\$(date +\%Y\%m\%d_\%H\%M\%S).sql" | crontab -
+-```
+-
+-## 📚 Дополнительные ресурсы
+-
+-### Документация
+-- [FastAPI документация](https://fastapi.tiangolo.com/)
+-- [Next.js документация](https://nextjs.org/docs)
+-- [Docker документация](https://docs.docker.com/)
+-
+-### Мониторинг
+-- [Prometheus + Grafana](https://prometheus.io/docs/grafana/)
+-- [Docker monitoring](https://docs.docker.com/config/daemon/logging/)
+-
+-### Безопасность
+-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+-- [Docker security](https://docs.docker.com/engine/security/)
+-
+-## 🤝 Поддержка
+-
+-При возникновении проблем:
+-
+-1. Проверьте логи: `docker-compose logs -f`
+-2. Проверьте health checks: `curl http://localhost:8000/health`
+-3. Проверьте требования: `python start.py --check-only`
+-4. Создайте issue в GitHub репозитории
+-
+----
+-
+-**Важно:** Перед production деплоем обязательно протестируйте на staging окружении и создайте бэкап данных.
+diff --git a/DEPLOY_RENDER_VERCEL.md b/DEPLOY_RENDER_VERCEL.md
+deleted file mode 100644
+index a467461..0000000
+--- a/DEPLOY_RENDER_VERCEL.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+-# Render + Vercel деплой (готовый чеклист)
+-
+-## 1. Репозиторий
+-- Запушить проект в GitHub/GitLab/Bitbucket.
+-- В корне репозитория присутствуют `backend/`, `frontend/`, `render.yaml`.
+-
+-## 2. Backend на Render
+-1. Render → New → Blueprint → выбрать репозиторий.
+-2. Подтвердить создание сервиса `wishshare-backend`.
+-3. Задать переменные окружения:
+-
+-```
+-POSTGRES_DSN=postgresql+asyncpg://user:pass@host:5432/db
+-REDIS_DSN=redis://:password@host:6379/0
+-JWT_SECRET_KEY=случайная_строка
+-BACKEND_URL=https://<your-backend>.onrender.com
+-FRONTEND_URL=https://<your-frontend>.vercel.app
+-BACKEND_CORS_ORIGINS=https://<your-frontend>.vercel.app
+-```
+-
+-4. Дождаться деплоя и проверить:
+-
+-```
+-https://<your-backend>.onrender.com/health
+-```
+-
+-## 3. Frontend на Vercel
+-1. Vercel → New Project → выбрать репозиторий.
+-2. Root Directory: `frontend`.
+-3. Environment Variables:
+-
+-```
+-NEXT_PUBLIC_API_BASE_URL=https://<your-backend>.onrender.com
+-NEXT_PUBLIC_WS_BASE_URL=wss://<your-backend>.onrender.com/ws
+-```
+-
+-4. Deploy и открыть `https://<your-frontend>.vercel.app`.
+-
+-## 4. Финальная сверка
+-- Логин/регистрация работают и создают cookie.
+-- `/dashboard` доступен после логина.
+-- `/wishlist/<slug>` грузится и получает данные.
+-- WebSocket подключается к `wss://<your-backend>.onrender.com/ws/<slug>`.
+-
+-## 5. Обновления
+-- Любой push в main запускает автодеплой на Render и Vercel.
+diff --git a/backend/app/api/routes/auth.py b/backend/app/api/routes/auth.py
+index de69dcc..7b59a68 100644
+--- a/backend/app/api/routes/auth.py
++++ b/backend/app/api/routes/auth.py
+@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
+ from app.api.deps import DbSessionDep, get_current_user
+ from app.core.mailer import send_email_verification_email, send_password_reset_email
+ from app.core.config import settings
++from app.core.rate_limit import check_rate_limit
+ from app.core.security import (
+     create_access_token,
+     create_refresh_token,
+@@ -175,7 +176,8 @@ def _validate_oauth_state(
+ 
+ 
+ @router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
+-async def register_user(payload: RegisterRequest, db: DbSessionDep) -> UserPublic:
++async def register_user(payload: RegisterRequest, request: Request, db: DbSessionDep) -> UserPublic:
++    check_rate_limit(request, endpoint="register")
+     existing = await db.execute(select(User).where(User.email == payload.email))
+     if existing.scalar_one_or_none():
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+@@ -201,6 +203,7 @@ async def login_user(
+     db: DbSessionDep,
+     request: Request,
+ ) -> UserPublic:
++    check_rate_limit(request, endpoint="login")
+     request_id = request.headers.get("X-Request-Id")
+     client_host = request.client.host if request.client else None
+     logger.info(
+diff --git a/backend/app/api/routes/wishlists.py b/backend/app/api/routes/wishlists.py
+index 1ea62df..6cc3b00 100644
+--- a/backend/app/api/routes/wishlists.py
++++ b/backend/app/api/routes/wishlists.py
+@@ -1,30 +1,57 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ from typing import Annotated, Any
++import logging
++import re
+ 
+ from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+ from pydantic import BaseModel
+ from sqlalchemy import func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
++from uuid import uuid4
+ 
+ from app.api.deps import DbSessionDep, get_current_user, get_optional_user
+-from app.models.models import Contribution, Gift, PrivacyLevelEnum, Reservation, User, Wishlist, WishlistAccessEmail
++from app.core.mailer import send_unavailable_gift_notice
++from app.models.models import (
++    Contribution, Gift, PrivacyLevelEnum, Reservation, User, Wishlist,
++    WishlistAccessEmail, WishlistDonation, WishlistItemArchive,
++)
+ from app.realtime.manager import manager
+-from uuid import uuid4
+ from app.schemas.wishlist import (
+     ContributionCreate,
++    ContributionPublic,
+     GiftBase,
+     GiftPublic,
+     GiftUpdate,
++    ReservationPublic,
+     WishlistCreate,
+     WishlistPublic,
+     WishlistUpdate,
+ )
+ 
++logger = logging.getLogger("wishshare.wishlists")
+ 
+ router = APIRouter(prefix="/wishlists", tags=["wishlists"])
+ compat_router = APIRouter(tags=["wishlists"])
+ 
+ 
++def _wishlist_fallback(wishlist: Wishlist, *, viewer_is_owner: bool = False) -> WishlistPublic:
++    """Return a minimal WishlistPublic when full loading fails, avoiding code duplication."""
++    return WishlistPublic(
++        id=wishlist.id,
++        slug=wishlist.slug,
++        title=wishlist.title,
++        description=wishlist.description,
++        event_date=wishlist.event_date,
++        privacy=wishlist.privacy,
++        is_secret_santa=wishlist.is_secret_santa,
++        created_at=wishlist.created_at,
++        owner_id=wishlist.owner_id,
++        gifts=[],
++        access_emails=[ae.email for ae in wishlist.access_emails] if viewer_is_owner else [],
++        public_token=wishlist.public_token if viewer_is_owner else None,
++    )
++
++
+ def _compute_gift_progress(price: float | None, total_contributions: float) -> tuple[float, bool]:
+     if not price or price <= 0:
+         return 0.0, False
+@@ -71,7 +98,6 @@ def _serialize_gift(
+ 
+     reservation_public = None
+     if gift.reservation:
+-        from app.schemas.wishlist import ReservationPublic
+ 
+         reservation_user = user_lookup.get(gift.reservation.user_id)
+         if role_for_sensitive == "friend":
+@@ -89,7 +115,6 @@ def _serialize_gift(
+                 user_id=None,
+             )
+ 
+-    from app.schemas.wishlist import ContributionPublic
+ 
+     contributions_public: list[ContributionPublic] = []
+     if role_for_sensitive == "friend":
+@@ -150,8 +175,6 @@ async def _load_wishlist_with_gifts(
+     wishlist: Wishlist,
+     viewer: User | None,
+ ) -> WishlistPublic:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
+     
+     logger.debug("_load_wishlist_with_gifts: start wishlist_id=%s slug=%s", wishlist.id, wishlist.slug)
+     
+@@ -295,8 +318,6 @@ async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User
+ 
+ 
+ def _slugify(title: str) -> str:
+-    import re
+-
+     slug = title.strip().lower()
+     slug = re.sub(r"[^a-z0-9а-яё]+", "-", slug)
+     slug = re.sub(r"-+", "-", slug).strip("-")
+@@ -308,34 +329,168 @@ def _slugify(title: str) -> str:
+ async def list_my_wishlists(
+     db: DbSessionDep,
+     current_user: User = Depends(get_current_user),
++    limit: int = 50,
++    offset: int = 0,
+ ) -> list[WishlistPublic]:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
++    """
++    Return wishlists owned by the current user (paginated).
++
++    Query params:
++      limit  – max items to return (default 50, max 100)
++      offset – skip first N wishlists (for pagination)
+ 
+-    logger.info("list_my_wishlists: starting for user_id=%s", current_user.id)
++    Uses a batch-load strategy: 7 fixed queries total, regardless of list size.
++    """
++    limit = min(max(1, limit), 100)
++    offset = max(0, offset)
+ 
++    logger.info("list_my_wishlists: starting for user_id=%s limit=%s offset=%s", current_user.id, limit, offset)
++
++    # ── 1. Wishlists ────────────────────────────────────────────────────────
+     try:
+-        result = await db.execute(
+-            select(Wishlist).where(Wishlist.owner_id == current_user.id).order_by(Wishlist.created_at.desc())
++        wl_result = await db.execute(
++            select(Wishlist)
++            .where(Wishlist.owner_id == current_user.id)
++            .order_by(Wishlist.created_at.desc())
++            .limit(limit)
++            .offset(offset)
+         )
+-        wishlists = list(result.scalars().unique())
+-        logger.info("list_my_wishlists: found %d wishlists for user_id=%s", len(wishlists), current_user.id)
+-    except Exception as e:
++        wishlists = list(wl_result.scalars().unique())
++    except Exception:
+         logger.exception("list_my_wishlists: DB query failed for user_id=%s", current_user.id)
+         return []
+ 
+-    result_list = []
+-    for idx, w in enumerate(wishlists):
++    if not wishlists:
++        return []
++
++    wishlist_ids = [w.id for w in wishlists]
++    wishlist_map: dict[int, Wishlist] = {w.id: w for w in wishlists}
++
++    # ── 2. All gifts ─────────────────────────────────────────────────────────
++    gifts_result = await db.execute(
++        select(Gift)
++        .where(Gift.wishlist_id.in_(wishlist_ids))
++        .order_by(Gift.created_at.asc())
++    )
++    all_gifts: list[Gift] = list(gifts_result.scalars().unique())
++    gift_ids = [g.id for g in all_gifts]
++
++    # gifts grouped by wishlist
++    gifts_by_wl: dict[int, list[Gift]] = {wid: [] for wid in wishlist_ids}
++    for g in all_gifts:
++        gifts_by_wl[g.wishlist_id].append(g)
++
++    # ── 3. Contribution sums per gift ────────────────────────────────────────
++    contributions_map: dict[int, float] = {}
++    if gift_ids:
++        contrib_sum_result = await db.execute(
++            select(
++                Contribution.gift_id,
++                func.coalesce(func.sum(Contribution.amount), 0),
++            )
++            .where(Contribution.gift_id.in_(gift_ids))
++            .group_by(Contribution.gift_id)
++        )
++        contributions_map = {row[0]: float(row[1]) for row in contrib_sum_result.all()}
++
++    # ── 4. Reservations ──────────────────────────────────────────────────────
++    reservation_map: dict[int, Reservation] = {}  # gift_id → Reservation
++    if gift_ids:
++        res_result = await db.execute(
++            select(Reservation).where(Reservation.gift_id.in_(gift_ids))
++        )
++        for rsv in res_result.scalars().unique():
++            reservation_map[rsv.gift_id] = rsv
++
++    # ── 5. Contributions detail (for owner's own wishlists all roles are "owner",
++    #       so detail is only needed for gift.contributions list – kept empty for owner view)
++    contrib_by_gift: dict[int, list[Contribution]] = {gid: [] for gid in gift_ids}
++    if gift_ids:
++        contrib_detail_result = await db.execute(
++            select(Contribution).where(Contribution.gift_id.in_(gift_ids))
++        )
++        for c in contrib_detail_result.scalars().unique():
++            contrib_by_gift[c.gift_id].append(c)
++
++    # ── 6. Users referenced by reservations / contributions ─────────────────
++    user_ids: set[int] = set()
++    for rsv in reservation_map.values():
++        user_ids.add(rsv.user_id)
++    for contribs in contrib_by_gift.values():
++        for c in contribs:
++            user_ids.add(c.user_id)
++
++    user_lookup: dict[int, User] = {}
++    if user_ids:
++        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
++        user_lookup = {u.id: u for u in users_result.scalars().unique()}
++
++    # ── 7. Access emails (only for owner, batch) ─────────────────────────────
++    access_emails_by_wl: dict[int, list[str]] = {wid: [] for wid in wishlist_ids}
++    ae_result = await db.execute(
++        select(WishlistAccessEmail)
++        .where(WishlistAccessEmail.wishlist_id.in_(wishlist_ids))
++        .order_by(WishlistAccessEmail.email.asc())
++    )
++    for ae in ae_result.scalars().unique():
++        access_emails_by_wl[ae.wishlist_id].append(ae.email)
++
++    # ── Assemble results ─────────────────────────────────────────────────────
++    result_list: list[WishlistPublic] = []
++    for wishlist in wishlists:
+         try:
+-            logger.debug("list_my_wishlists: processing wishlist %d (id=%s, slug=%s)", idx, w.id, w.slug)
+-            loaded = await _load_wishlist_with_gifts(db, w, current_user)
+-            result_list.append(loaded)
+-        except Exception as e:
+-            logger.exception("list_my_wishlists: failed to load wishlist id=%s slug=%s: %s", w.id, w.slug, str(e))
+-            # Пропускаем проблемный вишлист, но не падаем с 500
+-            continue
++            # Owner always sees everything for their own wishlists
++            viewer_role = "owner"
++            wl_gifts = gifts_by_wl.get(wishlist.id, [])
++
++            # Attach relationships to gift objects in-memory (no extra DB calls)
++            for gift in wl_gifts:
++                gift.reservation = reservation_map.get(gift.id)  # type: ignore[assignment]
++                gift.contributions = contrib_by_gift.get(gift.id, [])  # type: ignore[assignment]
++
++            privacy_value = wishlist.privacy
++            if isinstance(privacy_value, str):
++                try:
++                    privacy_value = PrivacyLevelEnum(privacy_value)
++                except ValueError:
++                    pass
++
++            gift_public_list = [
++                _serialize_gift(
++                    gift,
++                    contributions_map.get(gift.id, 0.0),
++                    viewer_role=viewer_role,
++                    user_lookup=user_lookup,
++                    is_secret_santa=wishlist.is_secret_santa,
++                )
++                for gift in wl_gifts
++            ]
++
++            result_list.append(WishlistPublic(
++                id=wishlist.id,
++                slug=wishlist.slug,
++                title=wishlist.title,
++                description=wishlist.description,
++                event_date=wishlist.event_date,
++                privacy=privacy_value,
++                is_secret_santa=wishlist.is_secret_santa,
++                created_at=wishlist.created_at,
++                owner_id=wishlist.owner_id,
++                gifts=gift_public_list,
++                access_emails=access_emails_by_wl.get(wishlist.id, []),
++                public_token=wishlist.public_token,
++            ))
++        except Exception:
++            logger.exception(
++                "list_my_wishlists: failed to serialize wishlist id=%s slug=%s",
++                wishlist.id, wishlist.slug,
++            )
++            result_list.append(_wishlist_fallback(wishlist, viewer_is_owner=True))
+ 
+-    logger.info("list_my_wishlists: successfully returned %d wishlists for user_id=%s", len(result_list), current_user.id)
++    logger.info(
++        "list_my_wishlists: returned %d wishlists for user_id=%s",
++        len(result_list), current_user.id,
++    )
+     return result_list
+ 
+ 
+@@ -346,8 +501,6 @@ async def update_wishlist(
+     db: DbSessionDep,
+     current_user: User = Depends(get_current_user),
+ ) -> WishlistPublic:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
+     
+     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+     wishlist = result.scalar_one_or_none()
+@@ -378,21 +531,7 @@ async def update_wishlist(
+         return await _load_wishlist_with_gifts(db, wishlist, current_user)
+     except Exception as e:
+         logger.exception("update_wishlist: failed to load wishlist after update: %s", str(e))
+-        # Возвращаем базовый объект
+-        return WishlistPublic(
+-            id=wishlist.id,
+-            slug=wishlist.slug,
+-            title=wishlist.title,
+-            description=wishlist.description,
+-            event_date=wishlist.event_date,
+-            privacy=wishlist.privacy,
+-            is_secret_santa=wishlist.is_secret_santa,
+-            created_at=wishlist.created_at,
+-            owner_id=wishlist.owner_id,
+-            gifts=[],
+-            access_emails=[ae.email for ae in wishlist.access_emails],
+-            public_token=wishlist.public_token,
+-        )
++        return _wishlist_fallback(wishlist, viewer_is_owner=True)
+ 
+ 
+ @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+@@ -419,8 +558,6 @@ async def create_wishlist(
+     db: DbSessionDep,
+     current_user: User = Depends(get_current_user),
+ ) -> WishlistPublic:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
+     
+     base_slug = _slugify(payload.title)
+     slug = base_slug
+@@ -440,7 +577,7 @@ async def create_wishlist(
+         privacy=payload.privacy.value if hasattr(payload.privacy, "value") else payload.privacy,
+         is_secret_santa=payload.is_secret_santa,
+         slug=slug,
+-        created_at=datetime.utcnow(),
++        created_at=datetime.now(timezone.utc),
+         public_token=str(uuid4()),
+     )
+     normalized_emails = _normalize_access_emails(payload.access_emails)
+@@ -456,21 +593,7 @@ async def create_wishlist(
+         return await _load_wishlist_with_gifts(db, wishlist, current_user)
+     except Exception as e:
+         logger.exception("create_wishlist: failed to load wishlist after creation: %s", str(e))
+-        # Возвращаем базовый объект без загрузки подарков
+-        return WishlistPublic(
+-            id=wishlist.id,
+-            slug=wishlist.slug,
+-            title=wishlist.title,
+-            description=wishlist.description,
+-            event_date=wishlist.event_date,
+-            privacy=wishlist.privacy,
+-            is_secret_santa=wishlist.is_secret_santa,
+-            created_at=wishlist.created_at,
+-            owner_id=wishlist.owner_id,
+-            gifts=[],
+-            access_emails=[ae.email for ae in wishlist.access_emails],
+-            public_token=wishlist.public_token,
+-        )
++        return _wishlist_fallback(wishlist, viewer_is_owner=True)
+ 
+ 
+ @router.get("/token/{token}", response_model=WishlistPublic)
+@@ -479,9 +602,6 @@ async def get_wishlist_by_token(
+     db: DbSessionDep,
+     response: Response,
+ ) -> WishlistPublic:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
+-    
+     result = await db.execute(select(Wishlist).where(Wishlist.public_token == token))
+     wishlist = result.scalar_one_or_none()
+     if not wishlist:
+@@ -490,26 +610,12 @@ async def get_wishlist_by_token(
+     if wishlist.privacy not in ("public", "link_only"):
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+     response.headers["Cache-Control"] = "public, max-age=60"
+-    
++
+     try:
+         return await _load_wishlist_with_gifts(db, wishlist, None)
+     except Exception as e:
+         logger.exception("get_wishlist_by_token: failed to load wishlist: %s", str(e))
+-        # Возвращаем базовый объект
+-        return WishlistPublic(
+-            id=wishlist.id,
+-            slug=wishlist.slug,
+-            title=wishlist.title,
+-            description=wishlist.description,
+-            event_date=wishlist.event_date,
+-            privacy=wishlist.privacy,
+-            is_secret_santa=wishlist.is_secret_santa,
+-            created_at=wishlist.created_at,
+-            owner_id=wishlist.owner_id,
+-            gifts=[],
+-            access_emails=[],
+-            public_token=wishlist.public_token,
+-        )
++        return _wishlist_fallback(wishlist)
+ 
+ 
+ @router.post("/{slug}/rotate-token")
+@@ -536,33 +642,19 @@ async def get_wishlist_by_slug(
+     db: DbSessionDep,
+     viewer: User | None = Depends(get_optional_user),
+ ) -> WishlistPublic:
+-    import logging
+-    logger = logging.getLogger("wishshare.wishlists")
+-    
+     result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+     wishlist = result.scalar_one_or_none()
+     if not wishlist:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
+ 
++    viewer_is_owner = viewer is not None and viewer.id == wishlist.owner_id
++
+     if wishlist.privacy in ("public", "link_only"):
+         try:
+             return await _load_wishlist_with_gifts(db, wishlist, viewer)
+         except Exception as e:
+             logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+-            return WishlistPublic(
+-                id=wishlist.id,
+-                slug=wishlist.slug,
+-                title=wishlist.title,
+-                description=wishlist.description,
+-                event_date=wishlist.event_date,
+-                privacy=wishlist.privacy,
+-                is_secret_santa=wishlist.is_secret_santa,
+-                created_at=wishlist.created_at,
+-                owner_id=wishlist.owner_id,
+-                gifts=[],
+-                access_emails=[],
+-                public_token=wishlist.public_token,
+-            )
++            return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
+ 
+     if not viewer:
+         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+@@ -575,39 +667,13 @@ async def get_wishlist_by_slug(
+             return await _load_wishlist_with_gifts(db, wishlist, viewer)
+         except Exception as e:
+             logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+-            return WishlistPublic(
+-                id=wishlist.id,
+-                slug=wishlist.slug,
+-                title=wishlist.title,
+-                description=wishlist.description,
+-                event_date=wishlist.event_date,
+-                privacy=wishlist.privacy,
+-                is_secret_santa=wishlist.is_secret_santa,
+-                created_at=wishlist.created_at,
+-                owner_id=wishlist.owner_id,
+-                gifts=[],
+-                access_emails=[],
+-                public_token=wishlist.public_token,
+-            )
++            return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
+ 
+     try:
+         return await _load_wishlist_with_gifts(db, wishlist, viewer)
+     except Exception as e:
+         logger.exception("get_wishlist_by_slug: failed to load wishlist: %s", str(e))
+-        return WishlistPublic(
+-            id=wishlist.id,
+-            slug=wishlist.slug,
+-            title=wishlist.title,
+-            description=wishlist.description,
+-            event_date=wishlist.event_date,
+-            privacy=wishlist.privacy,
+-            is_secret_santa=wishlist.is_secret_santa,
+-            created_at=wishlist.created_at,
+-            owner_id=wishlist.owner_id,
+-            gifts=[],
+-            access_emails=[],
+-            public_token=wishlist.public_token,
+-        )
++        return _wishlist_fallback(wishlist, viewer_is_owner=viewer_is_owner)
+ 
+ 
+ @router.post("/{slug}/gifts", response_model=GiftPublic, status_code=status.HTTP_201_CREATED)
+@@ -866,7 +932,6 @@ async def contribute_to_gift(
+     db.add(contribution)
+     # append-only donation ledger (best-effort)
+     try:
+-        from app.models.models import WishlistDonation
+         donation = WishlistDonation(
+             wishlist_id=gift.wishlist_id,
+             gift_id=gift.id,
+@@ -1021,7 +1086,6 @@ async def delete_gift(
+             detail="Cannot delete gift with active contributions",
+         )
+ 
+-    from app.models.models import WishlistItemArchive
+     gift.is_unavailable = True
+     gift.unavailable_reason = "Этот товар был удален из каталога"
+     archive = WishlistItemArchive(
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 9a5615a..3e85d15 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -1,8 +1,6 @@
+ import json
+ import os
+-from typing import Any
+ 
+-from pydantic import field_validator
+ from pydantic_settings import BaseSettings
+ 
+ 
+@@ -12,52 +10,16 @@ class Settings(BaseSettings):
+     frontend_url: str = "http://localhost:3000"
+     environment: str = "local"
+ 
+-    # Store as string, parse manually to avoid pydantic parsing issues
+     backend_cors_origins_raw: str = ""
+-    
+-    class Config:
+-        env_file = ".env"
+-        env_file_encoding = "utf-8"
+-        extra = "allow"  # Allow extra fields from environment
+ 
+-    @property
+-    def backend_cors_origins(self) -> list[str]:
+-        """Parse CORS origins from raw string."""
+-        # First try to get from environment variable directly
+-        raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
+-        if not raw:
+-            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+-
+-        # Handle JSON array format
+-        if raw.startswith("["):
+-            try:
+-                parsed = json.loads(raw)
+-                if isinstance(parsed, list):
+-                    return [str(item).strip() for item in parsed if str(item).strip()]
+-            except Exception:
+-                pass
+-
+-        # Handle comma-separated format
+-        return [item.strip() for item in raw.split(",") if item.strip()]
+-
+-    # Database configuration
+-    # For development: sqlite+aiosqlite:///./wishshare.db
+-    # For production: postgresql+asyncpg://user:password@localhost/wishshare
++    # Database: sqlite+aiosqlite:///./wishshare.db (dev) | postgresql+asyncpg://... (prod)
+     postgres_dsn: str = "sqlite+aiosqlite:///./wishshare.db"
+-    
+-    # For PostgreSQL configuration, use:
+-    # postgres_user: str = "wishshare"
+-    # postgres_password: str = "password"
+-    # postgres_host: str = "localhost"
+-    # postgres_port: int = 5432
+-    # postgres_db: str = "wishshare"
+-    # And construct DSN as: postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}
+-    
+     redis_dsn: str = "redis://localhost:6379/0"
+ 
+     access_token_expire_minutes: int = 60 * 24 * 7
+     refresh_token_expire_minutes: int = 60 * 24 * 30
+     password_reset_token_expire_minutes: int = 30
++    # SECURITY: override via JWT_SECRET_KEY env var; app refuses to start with default
+     jwt_secret_key: str = "CHANGE_ME"
+     jwt_algorithm: str = "HS256"
+ 
+@@ -67,7 +29,7 @@ class Settings(BaseSettings):
+     github_client_id: str = ""
+     github_client_secret: str = ""
+ 
+-    # SMTP settings (optional, for password reset emails)
++    # SMTP settings (optional)
+     smtp_host: str = ""
+     smtp_port: int = 587
+     smtp_username: str = ""
+@@ -75,7 +37,7 @@ class Settings(BaseSettings):
+     smtp_from_email: str = "noreply@wishshare.local"
+     smtp_use_tls: bool = True
+ 
+-    # Parser/browser fallback (for anti-bot protected marketplaces)
++    # Parser / browser fallback
+     parser_browser_fallback: bool = True
+     parser_browser_domains: str = (
+         "ozon.ru,wildberries.ru,wb.ru,lamoda.ru,dns-shop.ru,"
+@@ -85,9 +47,45 @@ class Settings(BaseSettings):
+     log_level: str = "INFO"
+     log_file: str = ""
+ 
+-    class Config:
+-        env_file = ".env"
+-        env_file_encoding = "utf-8"
++    # Single model_config — fixes the duplicate inner `class Config` bug
++    model_config = {
++        "env_file": ".env",
++        "env_file_encoding": "utf-8",
++        "extra": "allow",
++    }
++
++    @property
++    def backend_cors_origins(self) -> list[str]:
++        """Parse CORS origins from raw string or env var."""
++        raw = os.getenv("BACKEND_CORS_ORIGINS", self.backend_cors_origins_raw).strip()
++        if not raw:
++            return ["http://localhost:3000", "http://127.0.0.1:3000"]
++        if raw.startswith("["):
++            try:
++                parsed = json.loads(raw)
++                if isinstance(parsed, list):
++                    return [str(item).strip() for item in parsed if str(item).strip()]
++            except Exception:
++                pass
++        return [item.strip() for item in raw.split(",") if item.strip()]
++
++    @property
++    def allowed_parser_domains(self) -> set[str]:
++        """Domains the URL parser is allowed to fetch (SSRF allowlist)."""
++        return {d.strip() for d in self.parser_browser_domains.split(",") if d.strip()}
++
++    def validate_secrets(self) -> None:
++        """Refuse to start with insecure defaults."""
++        if self.jwt_secret_key == "CHANGE_ME":
++            raise RuntimeError(
++                "JWT_SECRET_KEY is still the default 'CHANGE_ME'. "
++                "Set a strong random secret via the JWT_SECRET_KEY environment variable."
++            )
++        if len(self.jwt_secret_key) < 32:
++            raise RuntimeError(
++                f"JWT_SECRET_KEY is too short ({len(self.jwt_secret_key)} chars). "
++                "Minimum 32 characters required."
++            )
+ 
+ 
+ settings = Settings()
+diff --git a/backend/app/core/enhanced_parser.py b/backend/app/core/enhanced_parser.py
+index 9d744f3..31ac652 100644
+--- a/backend/app/core/enhanced_parser.py
++++ b/backend/app/core/enhanced_parser.py
+@@ -826,6 +826,25 @@ class EnhancedProductParser:
+ 
+ # Удобная функция для использования
+ async def parse_product_from_url(url: str, timeout: int = 30, use_playwright: bool = True) -> ProductInfo:
+-    """Парсинг товара по URL с использованием улучшенного парсера"""
++    """Парсинг товара по URL с использованием улучшенного парсера.
++
++    Raises ValueError if the URL domain is not in the configured allowlist,
++    preventing SSRF attacks against internal services.
++    """
++    from app.core.config import settings
++    normalized = _normalize_url(url)
++    parsed = urlparse(normalized)
++    hostname = (parsed.hostname or "").lower()
++
++    # Strip 'www.' prefix for matching
++    bare_hostname = hostname.removeprefix("www.")
++
++    allowed = settings.allowed_parser_domains
++    if not any(bare_hostname == d or bare_hostname.endswith("." + d) for d in allowed):
++        raise ValueError(
++            f"Domain '{hostname}' is not in the allowed parser domains list. "
++            "Add it to PARSER_BROWSER_DOMAINS in your environment configuration."
++        )
++
+     async with EnhancedProductParser(timeout=timeout, use_playwright=use_playwright) as parser:
+-        return await parser.parse_product(url)
++        return await parser.parse_product(normalized)
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 3688346..1159290 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -122,6 +122,9 @@ async def security_headers_middleware(request: Request, call_next):
+ 
+ @app.on_event("startup")
+ async def on_startup() -> None:
++    # Refuse to start with insecure JWT secret
++    settings.validate_secrets()
++
+     try:
+         import asyncio
+ 
+@@ -309,14 +312,6 @@ def _handle_async_exception(loop, context) -> None:
+         logger.error("Async error: %s", message)
+ 
+ 
+-# Global exception handler for better error logging
+-@app.exception_handler(Exception)
+-async def global_exception_handler(request: Request, exc: Exception):
+-    logger.exception("Unhandled exception occurred for %s %s", request.method, request.url)
+-    return JSONResponse(
+-        status_code=500,
+-        content={"detail": "Internal server error", "error_type": type(exc).__name__, "error_msg": str(exc)}
+-    )
+ 
+ 
+ # Health check endpoint for debugging
+diff --git a/backend/app/models/models.py b/backend/app/models/models.py
+index 295b0af..26a7c01 100644
+--- a/backend/app/models/models.py
++++ b/backend/app/models/models.py
+@@ -1,4 +1,4 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ from enum import Enum as StrEnumBase
+ 
+ from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, Numeric, String
+@@ -16,11 +16,11 @@ class User(Base):
+     name: Mapped[str] = mapped_column(String(120), nullable=False)
+     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+     updated_at: Mapped[datetime] = mapped_column(
+         DateTime(timezone=True),
+-        default=datetime.utcnow,
+-        onupdate=datetime.utcnow,
++        default=lambda: datetime.now(timezone.utc),
++        onupdate=lambda: datetime.now(timezone.utc),
+     )
+ 
+     wishlists: Mapped[list["Wishlist"]] = relationship(back_populates="owner")
+@@ -45,7 +45,7 @@ class Wishlist(Base):
+     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+     privacy: Mapped[str] = mapped_column(String(20), default=PrivacyLevelEnum.LINK_ONLY.value)
+     is_secret_santa: Mapped[bool] = mapped_column(Boolean, default=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+     public_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid4()))
+ 
+     owner: Mapped[User] = relationship(back_populates="wishlists")
+@@ -69,7 +69,7 @@ class Gift(Base):
+     is_private: Mapped[bool] = mapped_column(Boolean, default=False)
+     is_unavailable: Mapped[bool] = mapped_column(Boolean, default=False)
+     unavailable_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+ 
+     wishlist: Mapped[Wishlist] = relationship(back_populates="gifts")
+     reservation: Mapped["Reservation | None"] = relationship(
+@@ -99,7 +99,7 @@ class Reservation(Base):
+     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+     gift_id: Mapped[int] = mapped_column(ForeignKey("gifts.id"), unique=True, index=True)
+     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+ 
+     gift: Mapped[Gift] = relationship(back_populates="reservation")
+     user: Mapped[User] = relationship(back_populates="reservations")
+@@ -112,7 +112,7 @@ class Contribution(Base):
+     gift_id: Mapped[int] = mapped_column(ForeignKey("gifts.id"), index=True)
+     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+ 
+     gift: Mapped[Gift] = relationship(back_populates="contributions")
+     user: Mapped[User] = relationship(back_populates="contributions")
+@@ -132,7 +132,7 @@ class WishlistItemArchive(Base):
+     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+     last_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+-    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+ 
+ 
+ class WishlistDonation(Base):
+@@ -143,7 +143,7 @@ class WishlistDonation(Base):
+     gift_id: Mapped[int] = mapped_column(Integer, index=True)
+     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+ 
+     __table_args__ = (
+         CheckConstraint("amount > 0", name="ck_wishlist_donations_amount_positive"),
+diff --git a/frontend/.tmp-fork.js b/frontend/.tmp-fork.js
+deleted file mode 100644
+index ba5b7d9..0000000
+--- a/frontend/.tmp-fork.js
++++ /dev/null
+@@ -1 +0,0 @@
+-setInterval(()=>{},1000)
+\ No newline at end of file
+diff --git a/frontend/app/dashboard/page.tsx b/frontend/app/dashboard/page.tsx
+index c505d81..e344176 100644
+--- a/frontend/app/dashboard/page.tsx
++++ b/frontend/app/dashboard/page.tsx
+@@ -1,29 +1,14 @@
+ "use client";
+ 
+ import Link from "next/link";
+-import { FormEvent, useEffect, useMemo, useState } from "react";
+-import { useQuery, useQueryClient } from "@tanstack/react-query";
+-import Image from "next/image";
+-import { api } from "../../lib/api";
+-import { User, useAuthStore } from "../../store/auth";
++import { useEffect, useMemo, useState } from "react";
++import { useQueryClient } from "@tanstack/react-query";
++import { useAuthStore } from "../../store/auth";
+ import EditWishlistModal from "../../components/EditWishlistModal";
+ import Tabs from "../../components/Tabs";
+-
+-type Gift = {
+-  id: number;
+-};
+-
+-type Wishlist = {
+-  id: number;
+-  slug: string;
+-  title: string;
+-  description?: string | null;
+-  event_date?: string | null;
+-  privacy?: "link_only" | "friends" | "public";
+-  is_secret_santa?: boolean;
+-  access_emails?: string[];
+-  gifts: Gift[];
+-};
++import WishlistsTab, { Wishlist } from "../../components/dashboard/WishlistsTab";
++import CreateTab from "../../components/dashboard/CreateTab";
++import ProfileTab from "../../components/dashboard/ProfileTab";
+ 
+ function GiftsIcon() {
+   return (
+@@ -44,12 +29,7 @@ function PlusIcon() {
+ function UserIcon() {
+   return (
+     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+-      <path
+-        strokeLinecap="round"
+-        strokeLinejoin="round"
+-        strokeWidth={2}
+-        d="M15 19a4 4 0 00-6 0m8-9a4 4 0 11-8 0 4 4 0 018 0z"
+-      />
++      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19a4 4 0 00-6 0m8-9a4 4 0 11-8 0 4 4 0 018 0z" />
+     </svg>
+   );
+ }
+@@ -57,181 +37,37 @@ function UserIcon() {
+ const TABS = [
+   { id: "wishlists", label: "Вишлисты", icon: <GiftsIcon /> },
+   { id: "create", label: "Создать", icon: <PlusIcon /> },
+-  { id: "profile", label: "Профиль", icon: <UserIcon /> }
++  { id: "profile", label: "Профиль", icon: <UserIcon /> },
+ ];
+ 
+ export default function DashboardPage() {
+-  const { user, fetchMe, logout, setUser } = useAuthStore();
++  const { user, fetchMe, logout } = useAuthStore();
+   const queryClient = useQueryClient();
+-
+-  const [creating, setCreating] = useState(false);
+-  const [createError, setCreateError] = useState<string | null>(null);
+-  const [title, setTitle] = useState("");
+-  const [description, setDescription] = useState("");
+-  const [eventDate, setEventDate] = useState("");
+-  const [privacy, setPrivacy] = useState<"link_only" | "friends" | "public">("link_only");
+-  const [isSecretSanta, setIsSecretSanta] = useState(false);
+-  const [accessEmailsInput, setAccessEmailsInput] = useState("");
++  const [activeTab, setActiveTab] = useState("wishlists");
+   const [editingWishlist, setEditingWishlist] = useState<Wishlist | null>(null);
+   const [isModalOpen, setIsModalOpen] = useState(false);
+-  const [activeTab, setActiveTab] = useState("wishlists");
+-  const [profileName, setProfileName] = useState("");
+-  const [profileAvatar, setProfileAvatar] = useState("");
+-  const [profileSaving, setProfileSaving] = useState(false);
+-  const [profileError, setProfileError] = useState<string | null>(null);
+-  const [passwordOld, setPasswordOld] = useState("");
+-  const [passwordNew, setPasswordNew] = useState("");
+-  const [passwordConfirm, setPasswordConfirm] = useState("");
+-  const [passwordSaving, setPasswordSaving] = useState(false);
+-  const [passwordError, setPasswordError] = useState<string | null>(null);
+-  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+ 
+   useEffect(() => {
+     fetchMe();
+   }, [fetchMe]);
+ 
+-  useEffect(() => {
+-    if (user) {
+-      setProfileName(user.name || "");
+-      setProfileAvatar(user.avatar_url || "");
+-    }
+-  }, [user]);
+-
+-  const { data: wishlists, refetch, isLoading } = useQuery<Wishlist[]>({
+-    queryKey: ["my-wishlists"],
+-    queryFn: () => api.get("/wishlists")
+-  });
+-
++  // Stats are derived from the first page query cache – show 0 until loaded
++  const cachedWishlists = queryClient.getQueryData<Wishlist[]>(["my-wishlists", 0]);
+   const stats = useMemo(() => {
+-    const list = wishlists || [];
+-    const gifts = list.reduce((acc, item) => acc + item.gifts.length, 0);
++    const list = cachedWishlists || [];
+     return {
+       totalWishlists: list.length,
+-      totalGifts: gifts
++      totalGifts: list.reduce((acc, w) => acc + w.gifts.length, 0),
+     };
+-  }, [wishlists]);
+-
+-  const resetCreateForm = () => {
+-    setTitle("");
+-    setDescription("");
+-    setEventDate("");
+-    setPrivacy("link_only");
+-    setIsSecretSanta(false);
+-    setAccessEmailsInput("");
+-  };
+-
+-  const parseEmails = (value: string): string[] =>
+-    value
+-      .split(/[\n,;]+/)
+-      .map((email) => email.trim().toLowerCase())
+-      .filter((email) => email.length > 0);
+-
+-  const handleCreate = async (e: FormEvent) => {
+-    e.preventDefault();
+-    setCreating(true);
+-    setCreateError(null);
+-    try {
+-      await api.post("/wishlists", {
+-        title,
+-        description: description || null,
+-        event_date: eventDate || null,
+-        privacy,
+-        is_secret_santa: isSecretSanta,
+-        access_emails: privacy === "friends" ? parseEmails(accessEmailsInput) : []
+-      });
+-      resetCreateForm();
+-      await refetch();
+-      setActiveTab("wishlists");
+-    } catch (err) {
+-      setCreateError(err instanceof Error ? err.message : "Не удалось создать вишлист");
+-    } finally {
+-      setCreating(false);
+-    }
+-  };
+-
+-  const handleEditClick = (wishlist: Wishlist) => {
+-    setEditingWishlist(wishlist);
+-    setIsModalOpen(true);
+-  };
+-
+-  const handleProfileSave = async (e: FormEvent) => {
+-    e.preventDefault();
+-    setProfileSaving(true);
+-    setProfileError(null);
+-    try {
+-      const updated = await api.put<User>("/auth/me", {
+-        name: profileName,
+-        avatar_url: profileAvatar || null
+-      });
+-      setUser(updated);
+-    } catch (err) {
+-      setProfileError(err instanceof Error ? err.message : "Не удалось обновить профиль");
+-    } finally {
+-      setProfileSaving(false);
+-    }
+-  };
+-
+-  const handlePasswordChange = async (e: FormEvent) => {
+-    e.preventDefault();
+-    setPasswordSaving(true);
+-    setPasswordError(null);
+-    setPasswordSuccess(null);
+-    if (!passwordOld || !passwordNew) {
+-      setPasswordError("Заполните текущий и новый пароль");
+-      setPasswordSaving(false);
+-      return;
+-    }
+-    if (passwordNew !== passwordConfirm) {
+-      setPasswordError("Пароли не совпадают");
+-      setPasswordSaving(false);
+-      return;
+-    }
+-    try {
+-      await api.post("/auth/change-password", {
+-        old_password: passwordOld,
+-        new_password: passwordNew
+-      });
+-      setPasswordOld("");
+-      setPasswordNew("");
+-      setPasswordConfirm("");
+-      setPasswordSuccess("Пароль обновлён");
+-    } catch (err) {
+-      setPasswordError(err instanceof Error ? err.message : "Не удалось изменить пароль");
+-    } finally {
+-      setPasswordSaving(false);
+-    }
+-  };
+-
+-  const handleDeleteClick = async (slug: string) => {
+-    if (!confirm("Удалить вишлист? Подарки и резервы будут удалены без возможности восстановления.")) {
+-      return;
+-    }
+-
+-    try {
+-      await api.delete(`/wishlists/${slug}`);
+-      await refetch();
+-    } catch (err) {
+-      alert(err instanceof Error ? err.message : "Ошибка удаления");
+-    }
+-  };
+-
+-  const copyPublicLink = async (slug: string) => {
+-    const url = `${window.location.origin}/wishlist/${slug}`;
+-    await navigator.clipboard.writeText(url);
+-    alert("Публичная ссылка скопирована");
+-  };
++  }, [cachedWishlists]);
+ 
+   if (!user) {
+     return (
+       <main className="min-h-screen px-4 py-10 grid-mesh">
+         <div className="max-w-lg mx-auto surface-panel-strong p-8 text-center space-y-5">
+           <h1 className="text-3xl font-bold">Доступ к кабинету</h1>
+-          <p className="text-sm text-[var(--text-secondary)]">
+-            Войдите в аккаунт, чтобы управлять своими вишлистами.
+-          </p>
+-          <Link href="/auth/login" className="btn-primary w-full">
+-            Войти
+-          </Link>
++          <p className="text-sm text-[var(--text-secondary)]">Войдите в аккаунт, чтобы управлять своими вишлистами.</p>
++          <Link href="/auth/login" className="btn-primary w-full">Войти</Link>
+         </div>
+       </main>
+     );
+@@ -273,251 +109,15 @@ export default function DashboardPage() {
+           {(tab) => (
+             <>
+               {tab === "wishlists" && (
+-                <section className="space-y-3">
+-                  <h2 className="text-2xl font-semibold">Мои вишлисты</h2>
+-
+-                  {isLoading ? (
+-                    <div className="surface-panel p-6 text-sm text-[var(--text-secondary)]">Загрузка...</div>
+-                  ) : wishlists && wishlists.length > 0 ? (
+-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+-                      {wishlists.map((w) => (
+-                        <article key={w.id} className="surface-panel p-5 space-y-4">
+-                          <div className="space-y-2">
+-                            <div className="flex items-start justify-between gap-3">
+-                              <h3 className="text-xl font-semibold leading-tight">{w.title}</h3>
+-                              <span className="text-[11px] rounded-full border border-[var(--line-strong)] px-2 py-1 text-[var(--text-secondary)]">
+-                                {w.privacy || "link_only"}
+-                              </span>
+-                            </div>
+-                            {w.description && <p className="text-sm text-[var(--text-secondary)]">{w.description}</p>}
+-                            <div className="text-xs text-[var(--text-secondary)] flex flex-wrap gap-3">
+-                              <span>🎁 {w.gifts.length}</span>
+-                              {w.event_date && <span>📅 {new Date(w.event_date).toLocaleDateString("ru-RU")}</span>}
+-                            </div>
+-                          </div>
+-
+-                          <div className="grid grid-cols-2 gap-2">
+-                            <Link href={`/wishlist/${w.slug}`} className="btn-primary text-sm">
+-                              Открыть
+-                            </Link>
+-                            <button type="button" onClick={() => copyPublicLink(w.slug)} className="btn-ghost text-sm">
+-                              Копировать ссылку
+-                            </button>
+-                            <button type="button" onClick={() => handleEditClick(w)} className="btn-ghost text-sm">
+-                              Редактировать
+-                            </button>
+-                            <button
+-                              type="button"
+-                              onClick={() => handleDeleteClick(w.slug)}
+-                              className="rounded-xl px-4 py-3 text-sm font-medium transition border border-red-400/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+-                            >
+-                              Удалить
+-                            </button>
+-                          </div>
+-                        </article>
+-                      ))}
+-                    </div>
+-                  ) : (
+-                    <div className="surface-panel p-8 text-center">
+-                      <p className="text-lg font-semibold">Пока нет ни одного вишлиста</p>
+-                      <p className="text-sm text-[var(--text-secondary)] mt-2">
+-                        Начните с первого списка и поделитесь им с друзьями.
+-                      </p>
+-                      <button
+-                        onClick={() => setActiveTab("create")}
+-                        className="btn-primary mt-4"
+-                      >
+-                        Создать первый вишлист
+-                      </button>
+-                    </div>
+-                  )}
+-                </section>
++                <WishlistsTab
++                  onEdit={(w) => { setEditingWishlist(w); setIsModalOpen(true); }}
++                  onCreateClick={() => setActiveTab("create")}
++                />
+               )}
+-
+               {tab === "create" && (
+-                <section className="surface-panel p-6 md:p-7 space-y-4">
+-                  <div>
+-                    <h2 className="text-2xl font-semibold">Создать новый вишлист</h2>
+-                    <p className="text-sm text-[var(--text-secondary)] mt-1">
+-                      Название, описание и уровень доступа можно задать сразу.
+-                    </p>
+-                  </div>
+-
+-                  {createError && (
+-                    <div className="rounded-xl border border-red-400/40 bg-red-400/10 px-4 py-3 text-red-100 text-sm">
+-                      {createError}
+-                    </div>
+-                  )}
+-
+-                  <form onSubmit={handleCreate} className="grid gap-3 md:grid-cols-2">
+-                    <input
+-                      value={title}
+-                      onChange={(e) => setTitle(e.target.value)}
+-                      placeholder="Название события"
+-                      className="rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                      required
+-                    />
+-                    <input
+-                      type="date"
+-                      value={eventDate}
+-                      onChange={(e) => setEventDate(e.target.value)}
+-                      className="rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                    />
+-                    <textarea
+-                      value={description}
+-                      onChange={(e) => setDescription(e.target.value)}
+-                      placeholder="Короткое описание (опционально)"
+-                      className="md:col-span-2 rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm min-h-[96px] focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                    />
+-                    <select
+-                      value={privacy}
+-                      onChange={(e) => setPrivacy(e.target.value as "link_only" | "friends" | "public")}
+-                      className="rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                    >
+-                      <option value="link_only">По ссылке</option>
+-                      <option value="friends">Только по email</option>
+-                      <option value="public">Публичный</option>
+-                    </select>
+-                    {privacy === "friends" && (
+-                      <div className="md:col-span-2">
+-                        <label className="text-sm text-[var(--text-secondary)]">
+-                          Email-адреса с доступом
+-                        </label>
+-                        <textarea
+-                          value={accessEmailsInput}
+-                          onChange={(e) => setAccessEmailsInput(e.target.value)}
+-                          placeholder="email1@example.com&#10;email2@example.com"
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm min-h-[96px] focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                        />
+-                        <p className="text-xs text-[var(--text-secondary)] mt-2">
+-                          Укажите email в отдельных строках или через запятую.
+-                        </p>
+-                      </div>
+-                    )}
+-                    <label className="rounded-xl border border-[var(--line)] px-4 py-3 flex items-center justify-between text-sm">
+-                      <span className="text-[var(--text-secondary)]">Secret Santa режим</span>
+-                      <input
+-                        type="checkbox"
+-                        checked={isSecretSanta}
+-                        onChange={(e) => setIsSecretSanta(e.target.checked)}
+-                        className="h-4 w-4 accent-emerald-400"
+-                      />
+-                    </label>
+-                    <button type="submit" disabled={creating} className="btn-primary md:col-span-2">
+-                      {creating ? "Создаём..." : "Создать вишлист"}
+-                    </button>
+-                  </form>
+-                </section>
+-              )}
+-
+-              {tab === "profile" && (
+-                <section className="grid gap-4 md:grid-cols-2">
+-                  <div className="surface-panel p-6 md:p-7 space-y-4">
+-                    <div>
+-                      <h2 className="text-2xl font-semibold">Профиль</h2>
+-                      <p className="text-sm text-[var(--text-secondary)] mt-1">
+-                        Обновите имя и аватар.
+-                      </p>
+-                    </div>
+-
+-                    {profileError && (
+-                      <div className="rounded-xl border border-red-400/40 bg-red-400/10 px-4 py-3 text-red-100 text-sm">
+-                        {profileError}
+-                      </div>
+-                    )}
+-
+-                    <form onSubmit={handleProfileSave} className="space-y-3">
+-                      <div>
+-                        <label className="text-sm text-[var(--text-secondary)]">Имя</label>
+-                        <input
+-                          value={profileName}
+-                          onChange={(e) => setProfileName(e.target.value)}
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                          required
+-                        />
+-                      </div>
+-                      <div>
+-                        <label className="text-sm text-[var(--text-secondary)]">Ссылка на аватар</label>
+-                        <input
+-                          value={profileAvatar}
+-                          onChange={(e) => setProfileAvatar(e.target.value)}
+-                          placeholder="https://..."
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                        />
+-                      </div>
+-                      {profileAvatar && (
+-                        <div className="h-24 w-24 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40">
+-                          <Image
+-                            src={profileAvatar}
+-                            alt="Аватар"
+-                            width={96}
+-                            height={96}
+-                            className="h-full w-full object-cover"
+-                            unoptimized
+-                          />
+-                        </div>
+-                      )}
+-                      <button type="submit" disabled={profileSaving} className="btn-primary">
+-                        {profileSaving ? "Сохраняем..." : "Сохранить профиль"}
+-                      </button>
+-                    </form>
+-                  </div>
+-
+-                  <div className="surface-panel p-6 md:p-7 space-y-4">
+-                    <div>
+-                      <h2 className="text-2xl font-semibold">Смена пароля</h2>
+-                      <p className="text-sm text-[var(--text-secondary)] mt-1">
+-                        Обновите пароль для входа.
+-                      </p>
+-                    </div>
+-
+-                    {passwordError && (
+-                      <div className="rounded-xl border border-red-400/40 bg-red-400/10 px-4 py-3 text-red-100 text-sm">
+-                        {passwordError}
+-                      </div>
+-                    )}
+-
+-                    {passwordSuccess && (
+-                      <div className="rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-emerald-100 text-sm">
+-                        {passwordSuccess}
+-                      </div>
+-                    )}
+-
+-                    <form onSubmit={handlePasswordChange} className="space-y-3">
+-                      <div>
+-                        <label className="text-sm text-[var(--text-secondary)]">Текущий пароль</label>
+-                        <input
+-                          type="password"
+-                          value={passwordOld}
+-                          onChange={(e) => setPasswordOld(e.target.value)}
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                        />
+-                      </div>
+-                      <div>
+-                        <label className="text-sm text-[var(--text-secondary)]">Новый пароль</label>
+-                        <input
+-                          type="password"
+-                          value={passwordNew}
+-                          onChange={(e) => setPasswordNew(e.target.value)}
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                        />
+-                      </div>
+-                      <div>
+-                        <label className="text-sm text-[var(--text-secondary)]">Повторите пароль</label>
+-                        <input
+-                          type="password"
+-                          value={passwordConfirm}
+-                          onChange={(e) => setPasswordConfirm(e.target.value)}
+-                          className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+-                        />
+-                      </div>
+-                      <button type="submit" disabled={passwordSaving} className="btn-primary">
+-                        {passwordSaving ? "Обновляем..." : "Обновить пароль"}
+-                      </button>
+-                    </form>
+-                  </div>
+-                </section>
++                <CreateTab onCreated={() => setActiveTab("wishlists")} />
+               )}
++              {tab === "profile" && <ProfileTab />}
+             </>
+           )}
+         </Tabs>
+@@ -528,7 +128,7 @@ export default function DashboardPage() {
+           wishlist={editingWishlist}
+           isOpen={isModalOpen}
+           onClose={() => setIsModalOpen(false)}
+-          onSave={() => refetch()}
++          onSave={() => queryClient.invalidateQueries({ queryKey: ["my-wishlists"] })}
+         />
+       )}
+     </main>
+diff --git a/frontend/app/providers.tsx b/frontend/app/providers.tsx
+index 5ac5be4..748ba15 100644
+--- a/frontend/app/providers.tsx
++++ b/frontend/app/providers.tsx
+@@ -3,13 +3,16 @@
+ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+ import { ReactNode, useState } from "react";
+ import { ErrorBoundary } from "../components/ErrorBoundary";
++import { ToastProvider } from "../components/Toast";
+ 
+ export function AppProviders({ children }: { children: ReactNode }) {
+   const [queryClient] = useState(() => new QueryClient());
+ 
+   return (
+     <QueryClientProvider client={queryClient}>
+-      <ErrorBoundary>{children}</ErrorBoundary>
++      <ToastProvider>
++        <ErrorBoundary>{children}</ErrorBoundary>
++      </ToastProvider>
+     </QueryClientProvider>
+   );
+ }
+diff --git a/test_parse.py b/test_parse.py
+deleted file mode 100644
+index fb1fcca..0000000
+--- a/test_parse.py
++++ /dev/null
+@@ -1,13 +0,0 @@
+-import httpx, json
+-
+-# Test 1: simple site
+-print("=== Test 1: Simple site ===")
+-resp = httpx.post("http://127.0.0.1:8000/parse-url", json={"url": "https://www.amazon.com"}, timeout=30)
+-print(f"Status: {resp.status_code}")
+-print(json.dumps(resp.json(), ensure_ascii=False, indent=2))
+-
+-# Test 2: OG preview endpoint
+-print("\n=== Test 2: /og/preview ===")
+-resp = httpx.post("http://127.0.0.1:8000/og/preview", json={"url": "https://www.amazon.com"}, timeout=30)
+-print(f"Status: {resp.status_code}")
+-print(json.dumps(resp.json(), ensure_ascii=False, indent=2))
+diff --git a/test_pw.py b/test_pw.py
+deleted file mode 100644
+index 6728e75..0000000
+--- a/test_pw.py
++++ /dev/null
+@@ -1,13 +0,0 @@
+-try:
+-    from playwright.sync_api import sync_playwright
+-    print("playwright import ok")
+-except Exception as e:
+-    print(f"playwright import failed: {e}")
+-
+-try:
+-    with sync_playwright() as p:
+-        browser = p.chromium.launch(headless=True)
+-        browser.close()
+-        print("playwright browser launch ok")
+-except Exception as e:
+-    print(f"playwright browser launch failed: {e}")

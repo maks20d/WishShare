@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../../../lib/api";
 import { useAuthStore } from "../../../store/auth";
+import { LoginSkeleton } from "../../../components/Skeleton";
 
 function LoginContent() {
   const router = useRouter();
@@ -188,7 +189,7 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense fallback={<LoginSkeleton />}>
       <LoginContent />
     </Suspense>
   );

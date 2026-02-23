@@ -43,7 +43,7 @@ class WishlistUpdate(BaseModel):
 class GiftBase(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     url: str | None = None
-    price: float = Field(gt=0)
+    price: float | None = Field(default=None, gt=0)
     image_url: str | None = None
     is_collective: bool = False
     is_private: bool = False

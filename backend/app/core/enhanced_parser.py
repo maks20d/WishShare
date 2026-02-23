@@ -5,7 +5,14 @@ Enhanced Product Parser for WishShare
 - JSON-LD структурированные данные  
 - Playwright для динамических сайтов
 - Специфичные селекторы для маркетплейсов
+- Redis-кэширование результатов
 """
+
+import sys
+# Fix for Python 3.13+ on Windows - must be before any asyncio/playwright usage
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import json
 import logging
@@ -13,11 +20,13 @@ import re
 import asyncio
 from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urljoin, urlparse
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from bs4 import BeautifulSoup
 import httpx
 from playwright.async_api import async_playwright
+
+from app.core.parse_cache import parse_cache
 
 logger = logging.getLogger("wishshare.enhanced_parser")
 
@@ -51,6 +60,21 @@ class ProductInfo:
     reviews_count: Optional[int] = None
     seller: Optional[str] = None
     delivery_info: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert ProductInfo to dictionary for caching."""
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ProductInfo":
+        """Create ProductInfo from cached dictionary."""
+        # Remove internal cache fields
+        data = {k: v for k, v in data.items() if not k.startswith("_")}
+        return cls(**{k: v for k, v in data.items() if k in [
+            "title", "price", "currency", "image_url", "description",
+            "brand", "availability", "category", "rating", "reviews_count",
+            "seller", "delivery_info"
+        ]})
 
 class MarketplaceConfig:
     """Конфигурация для конкретного маркетплейса"""
@@ -704,12 +728,29 @@ class EnhancedProductParser:
         except Exception as e:
             logger.debug(f"Universal selectors parsing failed: {e}")
     
-    async def parse_product(self, url: str) -> ProductInfo:
-        """Основной метод парсинга товара"""
+    async def parse_product(self, url: str, use_cache: bool = True) -> ProductInfo:
+        """Основной метод парсинга товара.
+        
+        Args:
+            url: URL товара для парсинга
+            use_cache: Использовать кэш Redis (по умолчанию True)
+        
+        Returns:
+            ProductInfo с данными о товаре
+        """
         try:
             url = _normalize_url(url)
             if not url:
                 return ProductInfo()
+
+            # Проверяем кэш
+            if use_cache:
+                cached = await parse_cache.get(url)
+                if cached:
+                    logger.info("Cache hit for URL: %s", url[:50])
+                    return ProductInfo.from_dict(cached)
+                else:
+                    logger.debug("Cache miss for URL: %s", url[:50])
 
             # Определяем маркетплейс
             config = self._get_marketplace_config(url)
@@ -719,12 +760,18 @@ class EnhancedProductParser:
                 if response.status_code in (401, 403) and self.use_playwright:
                     playwright_product = await self._parse_with_playwright(url, config)
                     if playwright_product:
+                        # Сохраняем в кэш
+                        if use_cache:
+                            await parse_cache.set(url, playwright_product.to_dict())
                         return playwright_product
                 response.raise_for_status()
             except Exception as exc:
                 if self.use_playwright:
                     playwright_product = await self._parse_with_playwright(url, config)
                     if playwright_product:
+                        # Сохраняем в кэш
+                        if use_cache:
+                            await parse_cache.set(url, playwright_product.to_dict())
                         return playwright_product
                 raise exc
 
@@ -758,7 +805,7 @@ class EnhancedProductParser:
             
             # Если данных недостаточно и включен Playwright, пробуем его
             if (not product.title or (not product.price and not product.image_url)) and self.use_playwright:
-                logger.info(f"Insufficient data from HTTP request, trying Playwright for {url}")
+                logger.info("Insufficient data from HTTP request, trying Playwright for %s", url[:50])
                 playwright_product = await self._parse_with_playwright(url, config)
                 if playwright_product:
                     # Playwright имеет приоритет
@@ -769,10 +816,14 @@ class EnhancedProductParser:
                     product.brand = playwright_product.brand or product.brand
                     product.availability = playwright_product.availability or product.availability
             
+            # Сохраняем в кэш если есть полезные данные
+            if use_cache and (product.title or product.price or product.image_url):
+                await parse_cache.set(url, product.to_dict())
+            
             return product
             
         except Exception as e:
-            logger.error(f"Error parsing product from {url}: {e}")
+            logger.error("Error parsing product from %s: %s", url[:50], e)
             return ProductInfo()
     
     async def _parse_meta_tags(self, soup: BeautifulSoup, product: ProductInfo, base_url: str):
@@ -825,7 +876,22 @@ class EnhancedProductParser:
             product.description = description_elem["content"].strip()
 
 # Удобная функция для использования
-async def parse_product_from_url(url: str, timeout: int = 30, use_playwright: bool = True) -> ProductInfo:
-    """Парсинг товара по URL с использованием улучшенного парсера"""
+async def parse_product_from_url(
+    url: str, 
+    timeout: int = 30, 
+    use_playwright: bool = True,
+    use_cache: bool = True
+) -> ProductInfo:
+    """Парсинг товара по URL с использованием улучшенного парсера.
+    
+    Args:
+        url: URL страницы товара
+        timeout: Таймаут запроса в секундах
+        use_playwright: Использовать Playwright для динамических сайтов
+        use_cache: Использовать Redis кэш (по умолчанию True)
+    
+    Returns:
+        ProductInfo с данными о товаре
+    """
     async with EnhancedProductParser(timeout=timeout, use_playwright=use_playwright) as parser:
-        return await parser.parse_product(url)
+        return await parser.parse_product(url, use_cache=use_cache)

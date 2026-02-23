@@ -5,10 +5,14 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { QRCodeSVG } from "qrcode.react";
 import { api } from "../../../lib/api";
 import { connectWishlistWs } from "../../../lib/ws";
 import { useAuthStore } from "../../../store/auth";
 import EditGiftModal from "../../../components/EditGiftModal";
+import { ConfirmModal } from "../../../components/ConfirmModal";
+import { useToast } from "../../../components/Toast";
+import { WishlistSkeleton } from "../../../components/Skeleton";
 
 type Reservation = {
   id: number;
@@ -131,6 +135,7 @@ export default function WishlistPage() {
   const slug = params.slug;
   const { user, fetchMe } = useAuthStore();
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
 
   const [giftTitle, setGiftTitle] = useState("");
   const [giftUrl, setGiftUrl] = useState("");
@@ -147,6 +152,7 @@ export default function WishlistPage() {
   const [copied, setCopied] = useState(false);
   const [editingGift, setEditingGift] = useState<Gift | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [deleteConfirmGift, setDeleteConfirmGift] = useState<Gift | null>(null);
 
   useEffect(() => {
     fetchMe();
@@ -203,6 +209,20 @@ export default function WishlistPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const confirmDeleteGift = async () => {
+    if (!deleteConfirmGift) return;
+
+    try {
+      await api.delete(`/gifts/${deleteConfirmGift.id}`);
+      await refetch();
+      showToast("Подарок удалён", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Ошибка удаления", "error");
+    } finally {
+      setDeleteConfirmGift(null);
+    }
+  };
+
   const handleCreateGift = async (e: FormEvent) => {
     e.preventDefault();
     if (!wishlist) return;
@@ -242,66 +262,110 @@ export default function WishlistPage() {
     if (!giftUrl) return;
     setCreateGiftError(null);
     setIsAutofilling(true);
+    
+    // Нормализация URL
+    let normalizedUrl = giftUrl.trim();
+    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+      normalizedUrl = 'https://' + normalizedUrl;
+    }
+    
     try {
       const data = await api.post<OgPreviewResponse>("/parse-url", {
-        url: giftUrl
+        url: normalizedUrl
       });
 
       const parsedTitle = typeof data.title === "string" ? data.title : null;
-      const sourceHost = getHost(giftUrl);
+      const sourceHost = getHost(normalizedUrl);
       const resultHost = data.url ? getHost(data.url) : null;
+      
+      // Проверяем, что title не является техническим/заблокированным
       const hasGoodTitle =
         !!parsedTitle &&
-        !looksLikeUrlTitle(parsedTitle, data.url || giftUrl) &&
+        parsedTitle.trim().length > 2 &&
+        !looksLikeUrlTitle(parsedTitle, data.url || normalizedUrl) &&
         !isBlockedOrTechnicalTitle(parsedTitle);
       
       let filledAny = false;
+      let filledFields: string[] = [];
       
       if (hasGoodTitle) {
-        setGiftTitle(parsedTitle);
+        setGiftTitle(parsedTitle.trim());
+        filledFields.push('название');
         filledAny = true;
       }
-      if (data.price != null) {
+      
+      if (data.price != null && data.price > 0) {
         setGiftPrice(String(data.price));
+        filledFields.push('цену');
         filledAny = true;
       }
+      
       if (data.image_url) {
         setGiftImageUrl(data.image_url);
+        filledFields.push('изображение');
         filledAny = true;
       }
 
-      if (!hasGoodTitle && parsedTitle && looksLikeUrlTitle(parsedTitle, data.url || giftUrl)) {
-        setCreateGiftError(
-          "Сайт не отдал название товара. Автозаполнение подставило только ссылку, заполните название вручную."
-        );
-        return;
-      }
-
-      if (!hasGoodTitle && parsedTitle && isBlockedOrTechnicalTitle(parsedTitle)) {
-        setCreateGiftError(
-          "Сайт закрыл доступ к данным товара (антибот/капча), поэтому цена и название не считались автоматически."
-        );
-        return;
-      }
-
-      if (sourceHost && resultHost && sourceHost !== resultHost && !hasGoodTitle && data.price == null) {
-        setCreateGiftError(
-          "Ссылка перенаправила на другую страницу, поэтому получить корректные данные товара не удалось."
-        );
-        return;
-      }
-
+      // Если ничего не заполнилось
       if (!filledAny) {
-        setCreateGiftError("Не удалось извлечь данные по этой ссылке. Введите поля вручную.");
+        // Проверяем конкретные причины
+        if (parsedTitle && isBlockedOrTechnicalTitle(parsedTitle)) {
+          setCreateGiftError(
+            "Сайт защищён от автоматического сбора данных (Cloudflare, капча и т.д.). " +
+            "Введите данные вручную или попробуйте ссылку на другой товар."
+          );
+        } else if (parsedTitle && looksLikeUrlTitle(parsedTitle, data.url || normalizedUrl)) {
+          setCreateGiftError(
+            "Не удалось получить название товара с этой страницы. " +
+            "Возможно, ссылка ведёт не на карточку товара. Введите данные вручную."
+          );
+        } else {
+          setCreateGiftError(
+            "Не удалось извлечь данные товара. " +
+            "Проверьте, что ссылка ведёт на страницу товара, и введите данные вручную."
+          );
+        }
+        return;
       }
+
+      // Если заполнилось только что-то одно и нет названия
+      if (!hasGoodTitle && filledAny) {
+        setCreateGiftError(
+          `Автозаполнение получило только ${filledFields.join(', ')}. ` +
+          `Название товара не найдено — введите его вручную.`
+        );
+        return;
+      }
+
+      // Успешное заполнение
+      if (filledFields.length > 0) {
+        // Successfully filled fields
+      }
+
     } catch (err) {
-      console.error("Autofill error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Не удалось выполнить автозаполнение";
-      setCreateGiftError(
-        errorMessage.includes("HTTP") 
-          ? `Ошибка при запросе к серверу: ${errorMessage}. Проверьте, что бэкенд запущен и доступен.`
-          : errorMessage
-      );
+      let errorMessage = "Не удалось выполнить автозаполнение";
+      
+      if (err instanceof Error) {
+        if (err.message.includes("HTTP 500") || err.message.includes("Internal server error")) {
+          errorMessage = 
+            "Ошибка сервера при обработке ссылки. " +
+            "Убедитесь, что бэкенд запущен, и попробуйте ещё раз.";
+        } else if (err.message.includes("HTTP 429") || err.message.includes("Rate limit")) {
+          errorMessage = 
+            "Слишком много запросов. Подождите минуту и попробуйте снова.";
+        } else if (err.message.includes("Network") || err.message.includes("Failed to fetch")) {
+          errorMessage = 
+            "Не удалось подключиться к серверу. " +
+            "Проверьте, что бэкенд запущен (http://localhost:8000).";
+        } else if (err.message.includes("HTTP 404")) {
+          errorMessage = 
+            "Эндпоинт автозаполнения не найден. Убедитесь, что бэкенд запущен.";
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      setCreateGiftError(errorMessage);
     } finally {
       setIsAutofilling(false);
     }
@@ -374,8 +438,8 @@ export default function WishlistPage() {
   if (isLoading) {
     return (
       <main className="min-h-screen px-4 py-10 grid-mesh">
-        <div className="max-w-3xl mx-auto surface-panel-strong p-8 text-center text-[var(--text-secondary)]">
-          Загрузка вишлиста...
+        <div className="max-w-6xl mx-auto">
+          <WishlistSkeleton />
         </div>
       </main>
     );
@@ -426,14 +490,15 @@ export default function WishlistPage() {
                   {copied ? "Ссылка скопирована" : "Поделиться ссылкой"}
                 </button>
                 {wishlist.public_token ? (
-                  <Image
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(`${typeof window !== "undefined" ? window.location.origin : ""}/w/${wishlist.public_token}`)}`}
-                    width={140}
-                    height={140}
-                    alt="QR код публичной ссылки"
-                    className="rounded"
-                    unoptimized
-                  />
+                  <div className="p-2 bg-white rounded-lg">
+                    <QRCodeSVG
+                      value={`${typeof window !== "undefined" ? window.location.origin : ""}/w/${wishlist.public_token}`}
+                      size={140}
+                      level="M"
+                      bgColor="#ffffff"
+                      fgColor="#000000"
+                    />
+                  </div>
                 ) : null}
               </div>
             )}
@@ -816,16 +881,7 @@ export default function WishlistPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={async () => {
-                          if (confirm("Удалить этот подарок?")) {
-                            try {
-                              await api.delete(`/gifts/${gift.id}`);
-                              await refetch();
-                            } catch (err) {
-                              alert(err instanceof Error ? err.message : "Ошибка удаления");
-                            }
-                          }
-                        }}
+                        onClick={() => setDeleteConfirmGift(gift)}
                         className="rounded-xl px-4 py-3 text-sm font-medium transition border border-red-400/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
                       >
                         Удалить
@@ -924,6 +980,17 @@ export default function WishlistPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={deleteConfirmGift !== null}
+        title="Удалить подарок?"
+        message="Это действие нельзя отменить."
+        confirmText="Удалить"
+        cancelText="Отмена"
+        confirmVariant="danger"
+        onConfirm={confirmDeleteGift}
+        onCancel={() => setDeleteConfirmGift(null)}
+      />
     </main>
   );
 }

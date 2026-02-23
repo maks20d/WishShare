@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../../../lib/api";
 import { useAuthStore } from "../../../store/auth";
+import { RegisterSkeleton } from "../../../components/Skeleton";
 
 function RegisterContent() {
   const router = useRouter();
@@ -184,7 +185,7 @@ function RegisterContent() {
 
 export default function RegisterPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense fallback={<RegisterSkeleton />}>
       <RegisterContent />
     </Suspense>
   );

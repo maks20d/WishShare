@@ -8,6 +8,9 @@ import { api } from "../../lib/api";
 import { User, useAuthStore } from "../../store/auth";
 import EditWishlistModal from "../../components/EditWishlistModal";
 import Tabs from "../../components/Tabs";
+import { useToast } from "../../components/Toast";
+import { ConfirmModal } from "../../components/ConfirmModal";
+import { DashboardWishlistsSkeleton, StatsSkeleton } from "../../components/Skeleton";
 
 type Gift = {
   id: number;
@@ -63,6 +66,7 @@ const TABS = [
 export default function DashboardPage() {
   const { user, fetchMe, logout, setUser } = useAuthStore();
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
 
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -85,6 +89,7 @@ export default function DashboardPage() {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [deleteConfirmSlug, setDeleteConfirmSlug] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMe();
@@ -142,6 +147,7 @@ export default function DashboardPage() {
       resetCreateForm();
       await refetch();
       setActiveTab("wishlists");
+      showToast("Вишлист создан", "success");
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Не удалось создать вишлист");
     } finally {
@@ -164,6 +170,7 @@ export default function DashboardPage() {
         avatar_url: profileAvatar || null
       });
       setUser(updated);
+      showToast("Профиль сохранён", "success");
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "Не удалось обновить профиль");
     } finally {
@@ -195,6 +202,7 @@ export default function DashboardPage() {
       setPasswordNew("");
       setPasswordConfirm("");
       setPasswordSuccess("Пароль обновлён");
+      showToast("Пароль изменён", "success");
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : "Не удалось изменить пароль");
     } finally {
@@ -202,23 +210,28 @@ export default function DashboardPage() {
     }
   };
 
-  const handleDeleteClick = async (slug: string) => {
-    if (!confirm("Удалить вишлист? Подарки и резервы будут удалены без возможности восстановления.")) {
-      return;
-    }
+  const handleDeleteClick = (slug: string) => {
+    setDeleteConfirmSlug(slug);
+  };
+
+  const confirmDeleteWishlist = async () => {
+    if (!deleteConfirmSlug) return;
 
     try {
-      await api.delete(`/wishlists/${slug}`);
+      await api.delete(`/wishlists/${deleteConfirmSlug}`);
       await refetch();
+      showToast("Вишлист удалён", "success");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Ошибка удаления");
+      showToast(err instanceof Error ? err.message : "Ошибка удаления", "error");
+    } finally {
+      setDeleteConfirmSlug(null);
     }
   };
 
   const copyPublicLink = async (slug: string) => {
     const url = `${window.location.origin}/wishlist/${slug}`;
     await navigator.clipboard.writeText(url);
-    alert("Публичная ссылка скопирована");
+    showToast("Ссылка скопирована", "success");
   };
 
   if (!user) {
@@ -277,7 +290,7 @@ export default function DashboardPage() {
                   <h2 className="text-2xl font-semibold">Мои вишлисты</h2>
 
                   {isLoading ? (
-                    <div className="surface-panel p-6 text-sm text-[var(--text-secondary)]">Загрузка...</div>
+                    <DashboardWishlistsSkeleton />
                   ) : wishlists && wishlists.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {wishlists.map((w) => (
@@ -531,6 +544,17 @@ export default function DashboardPage() {
           onSave={() => refetch()}
         />
       )}
+
+      <ConfirmModal
+        isOpen={deleteConfirmSlug !== null}
+        title="Удалить вишлист?"
+        message="Подарки и резервы будут удалены без возможности восстановления."
+        confirmText="Удалить"
+        cancelText="Отмена"
+        confirmVariant="danger"
+        onConfirm={confirmDeleteWishlist}
+        onCancel={() => setDeleteConfirmSlug(null)}
+      />
     </main>
   );
 }

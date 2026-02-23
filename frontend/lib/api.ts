@@ -139,15 +139,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         else if (res.status === 403) error.code = "FORBIDDEN";
         else if (res.status >= 500) error.code = "SERVER_ERROR";
 
-        logger.error("API request failed", {
-          url,
-          method,
-          status: res.status,
-          code: error.code,
-          requestBody: error.requestBody,
-          responseBody,
-          stack: error.stack
-        });
+        // Don't log 401 as error - it's expected for unauthenticated users
+        if (res.status === 401) {
+          // Silently handle - guests viewing pages is normal
+        } else {
+          logger.error("API request failed", {
+            url,
+            method,
+            status: res.status,
+            code: error.code,
+            requestBody: error.requestBody,
+            responseBody,
+            stack: error.stack
+          });
+        }
 
         if (res.status >= 500 && attempt < MAX_RETRIES) {
           lastError = error;

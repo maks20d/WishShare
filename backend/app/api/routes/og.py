@@ -10,6 +10,7 @@ import httpx
 
 from app.core.enhanced_parser import parse_product_from_url
 from app.core.config import settings
+from app.core.parse_cache import parse_cache
 
 
 router = APIRouter(tags=["og"])
@@ -984,14 +985,15 @@ async def preview_url(payload: OgPreviewRequest) -> OgPreviewResponse:
 async def parse_url(payload: OgPreviewRequest) -> OgPreviewResponse:
     """
     Универсальный эндпоинт для парсинга URL товаров.
-    Сначала пытается использовать встроенный OG-парсер, затем fallback на enhanced_parser.
+    Сначала проверяет кэш, затем OG-парсер, затем enhanced_parser.
     """
     try:
-        logger.info("Parse URL request for: %s", payload.url)
+        logger.info("[ParseURL] Request for: %s", payload.url)
 
         try:
             target_url = _normalize_url(payload.url)
             if not target_url:
+                logger.warning("[ParseURL] Failed to normalize URL: %s", payload.url)
                 return OgPreviewResponse(
                     url=payload.url,
                     title=None,
@@ -1003,7 +1005,7 @@ async def parse_url(payload: OgPreviewRequest) -> OgPreviewResponse:
                     availability=None,
                 )
         except Exception as exc:
-            logger.warning("Error normalizing URL %s: %s", payload.url, exc)
+            logger.warning("[ParseURL] Error normalizing URL %s: %s", payload.url, exc)
             return OgPreviewResponse(
                 url=payload.url,
                 title=None,
@@ -1015,13 +1017,45 @@ async def parse_url(payload: OgPreviewRequest) -> OgPreviewResponse:
                 availability=None,
             )
 
+        # Check cache first
+        cached = await parse_cache.get(target_url)
+        if cached:
+            logger.info("[ParseURL] Cache hit for: %s", target_url)
+            return OgPreviewResponse(
+                url=target_url,
+                title=cached.get("title"),
+                price=cached.get("price"),
+                image_url=cached.get("image_url"),
+                description=cached.get("description"),
+                brand=cached.get("brand"),
+                currency=cached.get("currency"),
+                availability=cached.get("availability"),
+            )
+
         result = await _preview_url_impl(OgPreviewRequest(url=target_url))
         
+        logger.info(
+            "[ParseURL] OG parser result for %s: title=%s, price=%s, image=%s",
+            payload.url,
+            result.title[:50] if result.title else None,
+            result.price,
+            bool(result.image_url)
+        )
+        
         if result.title or result.price is not None or result.image_url:
-            logger.info("OG parser success for %s: title=%s, price=%s", payload.url, result.title, result.price)
+            # Save to cache
+            await parse_cache.set(target_url, {
+                "title": result.title,
+                "price": result.price,
+                "image_url": result.image_url,
+                "description": result.description,
+                "brand": result.brand,
+                "currency": result.currency,
+                "availability": result.availability,
+            })
             return result
         
-        logger.info("OG parser returned empty, trying enhanced parser for %s", payload.url)
+        logger.info("[ParseURL] OG parser returned empty, trying enhanced parser for %s", payload.url)
         
         try:
             product_info = await parse_product_from_url(
@@ -1062,4 +1096,103 @@ async def parse_url(payload: OgPreviewRequest) -> OgPreviewResponse:
             brand=None,
             currency=None,
             availability=None,
+        )
+
+
+class CacheInvalidateRequest(BaseModel):
+    """Request model for cache invalidation."""
+    url: str | None = None  # If provided, invalidate specific URL. If None, clear all.
+
+
+class CacheInvalidateResponse(BaseModel):
+    """Response model for cache invalidation."""
+    success: bool
+    message: str
+    cleared_count: int = 0
+
+
+class CacheStatsResponse(BaseModel):
+    """Response model for cache statistics."""
+    total_keys: int
+    hits: int
+    misses: int
+    hit_rate: float
+    enabled: bool
+
+
+@router.post("/cache/invalidate", response_model=CacheInvalidateResponse)
+async def invalidate_cache(payload: CacheInvalidateRequest) -> CacheInvalidateResponse:
+    """
+    Инвалидация кэша парсинга.
+    
+    - Если указан URL, удаляется запись для конкретного URL
+    - Если URL не указан, очищается весь кэш
+    """
+    try:
+        if payload.url:
+            # Invalidate specific URL
+            target_url = _normalize_url(payload.url)
+            if not target_url:
+                return CacheInvalidateResponse(
+                    success=False,
+                    message="Invalid URL provided",
+                    cleared_count=0
+                )
+            
+            deleted = await parse_cache.delete(target_url)
+            if deleted:
+                logger.info("[Cache] Invalidated cache for URL: %s", target_url)
+                return CacheInvalidateResponse(
+                    success=True,
+                    message=f"Cache invalidated for URL: {target_url}",
+                    cleared_count=1
+                )
+            else:
+                return CacheInvalidateResponse(
+                    success=True,
+                    message="URL was not in cache",
+                    cleared_count=0
+                )
+        else:
+            # Clear all cache
+            cleared_count = await parse_cache.clear_all()
+            logger.info("[Cache] Cleared all cache, %d keys removed", cleared_count)
+            return CacheInvalidateResponse(
+                success=True,
+                message=f"Cleared all cache",
+                cleared_count=cleared_count
+            )
+    except Exception as exc:
+        logger.exception("[Cache] Error invalidating cache: %s", exc)
+        return CacheInvalidateResponse(
+            success=False,
+            message=f"Error: {str(exc)}",
+            cleared_count=0
+        )
+
+
+@router.get("/cache/stats", response_model=CacheStatsResponse)
+async def get_cache_stats() -> CacheStatsResponse:
+    """
+    Получение статистики кэша парсинга.
+    
+    Возвращает информацию о количестве записей, попаданиях и промахах.
+    """
+    try:
+        stats = await parse_cache.get_stats()
+        return CacheStatsResponse(
+            total_keys=stats.get("total_keys", 0),
+            hits=stats.get("hits", 0),
+            misses=stats.get("misses", 0),
+            hit_rate=stats.get("hit_rate", 0.0),
+            enabled=stats.get("enabled", True)
+        )
+    except Exception as exc:
+        logger.exception("[Cache] Error getting cache stats: %s", exc)
+        return CacheStatsResponse(
+            total_keys=0,
+            hits=0,
+            misses=0,
+            hit_rate=0.0,
+            enabled=False
         )
