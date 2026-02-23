@@ -826,6 +826,25 @@ class EnhancedProductParser:
 
 # Удобная функция для использования
 async def parse_product_from_url(url: str, timeout: int = 30, use_playwright: bool = True) -> ProductInfo:
-    """Парсинг товара по URL с использованием улучшенного парсера"""
+    """Парсинг товара по URL с использованием улучшенного парсера.
+
+    Raises ValueError if the URL domain is not in the configured allowlist,
+    preventing SSRF attacks against internal services.
+    """
+    from app.core.config import settings
+    normalized = _normalize_url(url)
+    parsed = urlparse(normalized)
+    hostname = (parsed.hostname or "").lower()
+
+    # Strip 'www.' prefix for matching
+    bare_hostname = hostname.removeprefix("www.")
+
+    allowed = settings.allowed_parser_domains
+    if not any(bare_hostname == d or bare_hostname.endswith("." + d) for d in allowed):
+        raise ValueError(
+            f"Domain '{hostname}' is not in the allowed parser domains list. "
+            "Add it to PARSER_BROWSER_DOMAINS in your environment configuration."
+        )
+
     async with EnhancedProductParser(timeout=timeout, use_playwright=use_playwright) as parser:
-        return await parser.parse_product(url)
+        return await parser.parse_product(normalized)
