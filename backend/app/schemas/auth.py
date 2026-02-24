@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, ValidationError
 
@@ -17,6 +18,8 @@ class TokenPayload(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    remember_me: bool = True
+    session_days: Literal[7, 30] | None = 30
 
 
 def _validate_password_strength(password: str) -> str:
@@ -38,6 +41,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=2, max_length=80)
+    remember_me: bool = True
+    session_days: Literal[7, 30] | None = 30
 
     @field_validator("name")
     @classmethod
@@ -57,8 +62,7 @@ class UserPublic(BaseModel):
     avatar_url: str | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class UserUpdate(BaseModel):

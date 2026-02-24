@@ -7,7 +7,6 @@ from typing import Callable
 import logging
 
 from fastapi import HTTPException, Request, status
-from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 

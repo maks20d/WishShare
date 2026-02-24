@@ -22,14 +22,18 @@ from app.core.config import settings
 from app.core.logger import configure_logging
 from app.db.session import Base, engine
 
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+except Exception:  # pragma: no cover - optional dependency
+    sentry_sdk = None
+    FastApiIntegration = None
 
 
 logger = configure_logging()
 
 # Initialize Sentry (optional - only if DSN is configured)
-if settings.sentry_dsn:
+if settings.sentry_dsn and sentry_sdk and FastApiIntegration:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         integrations=[FastApiIntegration()],
@@ -37,6 +41,8 @@ if settings.sentry_dsn:
         environment=settings.environment,
     )
     logger.info("Sentry initialized for environment=%s", settings.environment)
+elif settings.sentry_dsn:
+    logger.warning("SENTRY_DSN is set, but sentry-sdk is not installed")
 
 app = FastAPI(
     title=settings.app_name,

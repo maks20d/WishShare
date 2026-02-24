@@ -55,6 +55,10 @@ class CookieOptions(TypedDict, total=False):
     secure: bool
 
 
+DEFAULT_SESSION_DAYS = 30
+ALLOWED_SESSION_DAYS = {7, 30}
+
+
 def _cookie_options() -> CookieOptions:
     """
     Return cookie options based on environment.
@@ -79,26 +83,79 @@ def _cookie_options() -> CookieOptions:
     return {"samesite": "none", "secure": True}
 
 
-def _set_auth_cookie(response: Response, token: str) -> None:
+def _resolve_cookie_max_age(remember_me: bool, session_days: int | None) -> int | None:
+    if not remember_me:
+        return None
+    days = session_days if session_days in ALLOWED_SESSION_DAYS else DEFAULT_SESSION_DAYS
+    return days * 24 * 60 * 60
+
+
+def _set_auth_cookie(
+    response: Response,
+    token: str,
+    *,
+    remember_me: bool = True,
+    session_days: int | None = DEFAULT_SESSION_DAYS,
+) -> None:
     response.set_cookie(
         "access_token",
         token,
         httponly=True,
-        max_age=60 * 60 * 24 * 7,
+        max_age=_resolve_cookie_max_age(remember_me, session_days),
         path="/",
         **_cookie_options(),
     )
 
 
-def _set_refresh_cookie(response: Response, token: str) -> None:
+def _set_refresh_cookie(
+    response: Response,
+    token: str,
+    *,
+    remember_me: bool = True,
+    session_days: int | None = DEFAULT_SESSION_DAYS,
+) -> None:
     response.set_cookie(
         "refresh_token",
         token,
         httponly=True,
-        max_age=60 * 60 * 24 * 30,
+        max_age=_resolve_cookie_max_age(remember_me, session_days),
         path="/",
         **_cookie_options(),
     )
+
+
+def _set_session_prefs_cookie(
+    response: Response,
+    *,
+    remember_me: bool,
+    session_days: int | None,
+) -> None:
+    max_age = _resolve_cookie_max_age(remember_me, session_days)
+    normalized_days = session_days if session_days in ALLOWED_SESSION_DAYS else DEFAULT_SESSION_DAYS
+    response.set_cookie(
+        "remember_me",
+        "1" if remember_me else "0",
+        httponly=True,
+        max_age=max_age,
+        path="/",
+        **_cookie_options(),
+    )
+    response.set_cookie(
+        "session_days",
+        str(normalized_days),
+        httponly=True,
+        max_age=max_age,
+        path="/",
+        **_cookie_options(),
+    )
+
+
+def _parse_session_days(raw: str | None) -> int:
+    try:
+        parsed = int(raw or "")
+    except ValueError:
+        parsed = DEFAULT_SESSION_DAYS
+    return parsed if parsed in ALLOWED_SESSION_DAYS else DEFAULT_SESSION_DAYS
 
 
 def _safe_next_path(next_path: str | None) -> str:
@@ -121,6 +178,7 @@ def _build_oauth_redirect_response(
     response = RedirectResponse(url=f"{settings.frontend_url}{safe_next}", status_code=302)
     _set_auth_cookie(response, token)
     _set_refresh_cookie(response, refresh_token)
+    _set_session_prefs_cookie(response, remember_me=True, session_days=DEFAULT_SESSION_DAYS)
     if clear_oauth_state_cookie:
         response.delete_cookie(clear_oauth_state_cookie, **_cookie_options())
     if clear_oauth_next_cookie:
@@ -189,6 +247,7 @@ async def register_user(
     payload: RegisterRequest,
     db: DbSessionDep,
     request: Request,
+    response: Response,
 ) -> UserPublic:
     # Rate limit registration to prevent spam
     check_rate_limit(request, max_requests=5, window_seconds=300, key_suffix="register")
@@ -205,6 +264,26 @@ async def register_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    # Issue auth cookies immediately — no second /login request needed
+    _set_auth_cookie(
+        response,
+        create_access_token(str(user.id)),
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
+    _set_refresh_cookie(
+        response,
+        create_refresh_token(str(user.id)),
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
+    _set_session_prefs_cookie(
+        response,
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
+
     token = create_email_verification_token(user.email)
     verify_link = f"{settings.backend_url}/auth/verify-email?token={token}"
     send_email_verification_email(user.email, verify_link)
@@ -275,8 +354,23 @@ async def login_user(
 
     token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
-    _set_auth_cookie(response, token)
-    _set_refresh_cookie(response, refresh_token)
+    _set_auth_cookie(
+        response,
+        token,
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
+    _set_refresh_cookie(
+        response,
+        refresh_token,
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
+    _set_session_prefs_cookie(
+        response,
+        remember_me=payload.remember_me,
+        session_days=payload.session_days,
+    )
     audit_login_success(request, user.id, user.email)
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
@@ -286,12 +380,16 @@ async def login_user(
 async def logout_user(response: Response) -> None:
     response.delete_cookie("access_token", path="/", **_cookie_options())
     response.delete_cookie("refresh_token", path="/", **_cookie_options())
+    response.delete_cookie("remember_me", path="/", **_cookie_options())
+    response.delete_cookie("session_days", path="/", **_cookie_options())
 
 
 @router.post("/refresh", status_code=status.HTTP_204_NO_CONTENT)
 async def refresh_token(
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias="refresh_token"),
+    remember_me_cookie: str | None = Cookie(default="1", alias="remember_me"),
+    session_days_cookie: str | None = Cookie(default=str(DEFAULT_SESSION_DAYS), alias="session_days"),
 ) -> None:
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -305,8 +403,25 @@ async def refresh_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     new_access_token = create_access_token(subject)
     new_refresh_token = create_refresh_token(subject)
-    _set_auth_cookie(response, new_access_token)
-    _set_refresh_cookie(response, new_refresh_token)
+    remember_me = remember_me_cookie != "0"
+    session_days = _parse_session_days(session_days_cookie)
+    _set_auth_cookie(
+        response,
+        new_access_token,
+        remember_me=remember_me,
+        session_days=session_days,
+    )
+    _set_refresh_cookie(
+        response,
+        new_refresh_token,
+        remember_me=remember_me,
+        session_days=session_days,
+    )
+    _set_session_prefs_cookie(
+        response,
+        remember_me=remember_me,
+        session_days=session_days,
+    )
 
 
 @router.get("/me", response_model=UserPublic)

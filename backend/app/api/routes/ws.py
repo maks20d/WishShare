@@ -1,7 +1,8 @@
+import asyncio
 import logging
 from urllib.parse import parse_qs, unquote, urlparse
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,9 +11,11 @@ from app.core.security import decode_access_token
 from app.models.models import User, Wishlist, WishlistAccessEmail
 from app.realtime.manager import manager
 
-
 router = APIRouter(tags=["ws"])
 logger = logging.getLogger("wishshare.ws")
+
+WS_PING_INTERVAL = 30   # seconds between server-initiated pings
+WS_PING_TIMEOUT  = 60   # seconds to wait for pong before closing idle connection
 
 
 @router.websocket("/ws/{wishlist_slug:path}")
@@ -25,6 +28,7 @@ async def wishlist_ws(
     decoded_slug = unquote(unquote(wishlist_slug))
     logger.info("WS accepted slug=%s", decoded_slug)
 
+    # ── Auth ──────────────────────────────────────────────────────────────
     query_params = parse_qs(urlparse(str(websocket.url)).query)
     token = None
     auth_header = websocket.headers.get("Authorization")
@@ -47,6 +51,7 @@ async def wishlist_ws(
                 result = await db.execute(select(User).where(User.id == user_id))
                 viewer = result.scalar_one_or_none()
 
+    # ── Wishlist lookup & access control ─────────────────────────────────
     result = await db.execute(select(Wishlist).where(Wishlist.slug == decoded_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
@@ -82,9 +87,27 @@ async def wishlist_ws(
 
     await manager.connect(decoded_slug, websocket, role)
     logger.info("WS connected slug=%s role=%s", decoded_slug, role)
+
+    # ── Message loop with idle-timeout ────────────────────────────────────
     try:
         while True:
-            await websocket.receive_text()
+            try:
+                # Wait for any client message; timeout = ping interval
+                await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=WS_PING_INTERVAL,
+                )
+            except asyncio.TimeoutError:
+                # No message received within ping interval — send a ping
+                try:
+                    await asyncio.wait_for(
+                        websocket.send_text('{"type":"ping"}'),
+                        timeout=WS_PING_TIMEOUT - WS_PING_INTERVAL,
+                    )
+                except (asyncio.TimeoutError, Exception):
+                    logger.info("WS idle timeout, closing slug=%s", decoded_slug)
+                    break
     except WebSocketDisconnect:
         logger.info("WS disconnected slug=%s", decoded_slug)
+    finally:
         manager.disconnect(decoded_slug, websocket)

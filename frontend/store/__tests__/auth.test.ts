@@ -23,7 +23,7 @@ import { api, ApiError } from "../../lib/api";
 import { useAuthStore, type User } from "../auth";
 
 const resetStore = () => {
-  useAuthStore.setState({ user: null, loading: false });
+  useAuthStore.setState({ user: null, loading: false, sessionChecking: false });
 };
 
 describe("auth store", () => {
@@ -44,6 +44,10 @@ describe("auth store", () => {
 
     it("starts with loading false", () => {
       expect(useAuthStore.getState().loading).toBe(false);
+    });
+
+    it("starts with sessionChecking false", () => {
+      expect(useAuthStore.getState().sessionChecking).toBe(false);
     });
   });
 
@@ -103,7 +107,7 @@ describe("auth store", () => {
       expect(useAuthStore.getState().loading).toBe(false);
     });
 
-    it("sets loading to true during fetch", async () => {
+    it("sets sessionChecking to true during fetch", async () => {
       const user: User = { id: 1, email: "u@example.com", name: "User" };
       let resolvePromise: (value: User) => void;
       (api.get as Mock).mockImplementation(() => 
@@ -112,14 +116,14 @@ describe("auth store", () => {
 
       const promise = useAuthStore.getState().fetchMe();
       
-      // Loading should be true during fetch
-      expect(useAuthStore.getState().loading).toBe(true);
+      // sessionChecking should be true during fetch
+      expect(useAuthStore.getState().sessionChecking).toBe(true);
       
       // Resolve the promise
       resolvePromise!(user);
       await promise;
       
-      expect(useAuthStore.getState().loading).toBe(false);
+      expect(useAuthStore.getState().sessionChecking).toBe(false);
     });
 
     it("clears session on 401", async () => {
@@ -150,7 +154,7 @@ describe("auth store", () => {
       expect(useAuthStore.getState().loading).toBe(false);
     });
 
-    it("clears session on SERVER_ERROR", async () => {
+    it("keeps persisted session on SERVER_ERROR", async () => {
       const err = new Error("Server error") as ApiError;
       err.code = "SERVER_ERROR";
       (api.get as Mock).mockRejectedValue(err);
@@ -160,11 +164,11 @@ describe("auth store", () => {
 
       await useAuthStore.getState().fetchMe();
 
-      expect(useAuthStore.getState().user).toBeNull();
-      expect(useAuthStore.getState().loading).toBe(false);
+      expect(useAuthStore.getState().user).toEqual({ id: 1, email: "test@test.com", name: "Test" });
+      expect(useAuthStore.getState().sessionChecking).toBe(false);
     });
 
-    it("clears session on unknown error", async () => {
+    it("keeps persisted session on unknown error", async () => {
       const err = new Error("Unknown error");
       (api.get as Mock).mockRejectedValue(err);
 
@@ -173,8 +177,8 @@ describe("auth store", () => {
 
       await useAuthStore.getState().fetchMe();
 
-      expect(useAuthStore.getState().user).toBeNull();
-      expect(useAuthStore.getState().loading).toBe(false);
+      expect(useAuthStore.getState().user).toEqual({ id: 1, email: "test@test.com", name: "Test" });
+      expect(useAuthStore.getState().sessionChecking).toBe(false);
     });
   });
 
@@ -237,41 +241,38 @@ describe("auth store", () => {
 
       expect(api.post).toHaveBeenCalledWith("/auth/login", {
         email: "test@test.com",
-        password: "mypassword"
+        password: "mypassword",
+        remember_me: true,
+        session_days: 30,
       });
     });
   });
 
   describe("register", () => {
-    it("registers and logs in user", async () => {
+    it("registers user and saves session options", async () => {
       const user: User = { id: 1, email: "new@test.com", name: "New User" };
-      (api.post as Mock)
-        .mockResolvedValueOnce(user) // register
-        .mockResolvedValueOnce(undefined); // login
+      (api.post as Mock).mockResolvedValueOnce(user);
 
       await useAuthStore.getState().register("New User", "new@test.com", "password");
 
       expect(useAuthStore.getState().user).toEqual(user);
       expect(useAuthStore.getState().loading).toBe(false);
       
-      // Check both API calls were made
       expect(api.post).toHaveBeenCalledWith("/auth/register", {
         name: "New User",
         email: "new@test.com",
-        password: "password"
-      });
-      expect(api.post).toHaveBeenCalledWith("/auth/login", {
-        email: "new@test.com",
-        password: "password"
+        password: "password",
+        remember_me: true,
+        session_days: 30,
       });
     });
 
     it("sets loading during registration", async () => {
       const user: User = { id: 1, email: "new@test.com", name: "New User" };
       let resolveRegister: (value: User) => void;
-      (api.post as Mock)
-        .mockImplementationOnce(() => new Promise((resolve) => { resolveRegister = resolve; }))
-        .mockResolvedValueOnce(undefined);
+      (api.post as Mock).mockImplementationOnce(
+        () => new Promise((resolve) => { resolveRegister = resolve; })
+      );
 
       const promise = useAuthStore.getState().register("New User", "new@test.com", "password");
       
@@ -337,7 +338,7 @@ describe("auth store", () => {
       
       (api.post as Mock).mockRejectedValue(new Error("Network error"));
 
-      await useAuthStore.getState().logout();
+      await expect(useAuthStore.getState().logout()).rejects.toThrow("Network error");
 
       expect(useAuthStore.getState().user).toBeNull();
     });

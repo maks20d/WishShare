@@ -1,10 +1,13 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ToastProvider } from "../components/Toast";
+import InstallPrompt from "../components/InstallPrompt";
 import { useSwipeNavigation } from "../lib/useSwipeNavigation";
+import { registerServiceWorker } from "../lib/registerSW";
+import { useAuthStore } from "../store/auth";
 
 /**
  * Inner component that uses the swipe navigation hook
@@ -23,14 +26,40 @@ function SwipeNavigationProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function SessionBootstrap() {
+  const fetchMe = useAuthStore((state) => state.fetchMe);
+  const sessionChecking = useAuthStore((state) => state.sessionChecking);
+
+  useEffect(() => {
+    void fetchMe();
+  }, [fetchMe]);
+
+  if (!sessionChecking) return null;
+
+  return (
+    <div className="fixed top-3 right-3 z-[90] rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-1 text-xs text-[var(--text-secondary)] shadow-lg">
+      Проверка сессии...
+    </div>
+  );
+}
+
 export function AppProviders({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
+
+  // Register Service Worker for PWA
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <ErrorBoundary>
-          <SwipeNavigationProvider>{children}</SwipeNavigationProvider>
+          <SwipeNavigationProvider>
+            <SessionBootstrap />
+            {children}
+            <InstallPrompt />
+          </SwipeNavigationProvider>
         </ErrorBoundary>
       </ToastProvider>
     </QueryClientProvider>

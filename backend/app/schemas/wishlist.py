@@ -91,8 +91,7 @@ class ContributionPublic(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ReservationPublic(BaseModel):
@@ -102,8 +101,7 @@ class ReservationPublic(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class GiftPublic(BaseModel):
@@ -124,8 +122,7 @@ class GiftPublic(BaseModel):
     is_unavailable: bool = False
     unavailable_reason: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class WishlistPublic(BaseModel):
@@ -142,5 +139,4 @@ class WishlistPublic(BaseModel):
     access_emails: list[str] = []
     public_token: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

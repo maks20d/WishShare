@@ -892,6 +892,24 @@ async def parse_product_from_url(
     
     Returns:
         ProductInfo с данными о товаре
+        
+    Raises ValueError if the URL domain is not in the configured allowlist,
+    preventing SSRF attacks against internal services.
     """
+    from app.core.config import settings
+    normalized = _normalize_url(url)
+    parsed = urlparse(normalized)
+    hostname = (parsed.hostname or "").lower()
+
+    # Strip 'www.' prefix for matching
+    bare_hostname = hostname.removeprefix("www.")
+
+    allowed = settings.allowed_parser_domains
+    if not any(bare_hostname == d or bare_hostname.endswith("." + d) for d in allowed):
+        raise ValueError(
+            f"Domain '{hostname}' is not in the allowed parser domains list. "
+            "Add it to PARSER_BROWSER_DOMAINS in your environment configuration."
+        )
+
     async with EnhancedProductParser(timeout=timeout, use_playwright=use_playwright) as parser:
-        return await parser.parse_product(url, use_cache=use_cache)
+        return await parser.parse_product(normalized, use_cache=use_cache)

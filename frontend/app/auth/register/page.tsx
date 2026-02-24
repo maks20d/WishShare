@@ -4,7 +4,7 @@ import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../../../lib/api";
-import { useAuthStore } from "../../../store/auth";
+import { type SessionDays, useAuthStore } from "../../../store/auth";
 import { RegisterSkeleton } from "../../../components/Skeleton";
 
 function RegisterContent() {
@@ -13,6 +13,8 @@ function RegisterContent() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+  const [sessionDays, setSessionDays] = useState<SessionDays>(30);
   const [error, setError] = useState<string | null>(null);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
   const searchParams = useSearchParams();
@@ -23,7 +25,7 @@ function RegisterContent() {
     e.preventDefault();
     setError(null);
     try {
-      await register(name, email, password);
+      await register(name, email, password, rememberMe, sessionDays);
       router.push(nextPath);
     } catch (err) {
       if (err instanceof Error && err.message) {
@@ -105,6 +107,35 @@ function RegisterContent() {
                 className="w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                 required
               />
+            </div>
+
+            <div className="rounded-xl border border-[var(--line)] bg-slate-900/30 p-3 space-y-3">
+              <label className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-[var(--text-secondary)]">Запомнить меня</span>
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="h-4 w-4 accent-emerald-400"
+                />
+              </label>
+              {rememberMe ? (
+                <div className="space-y-1">
+                  <label className="text-xs text-[var(--text-secondary)]">Срок входа</label>
+                  <select
+                    value={sessionDays}
+                    onChange={(e) => setSessionDays(Number(e.target.value) as SessionDays)}
+                    className="w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  >
+                    <option value={7}>7 дней</option>
+                    <option value={30}>30 дней</option>
+                  </select>
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Сессия закончится при закрытии браузера.
+                </p>
+              )}
             </div>
 
             <button

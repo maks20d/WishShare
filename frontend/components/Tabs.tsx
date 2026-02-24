@@ -29,12 +29,12 @@ export default function Tabs({ tabs, defaultTab, children, onChange }: TabsProps
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 p-1 rounded-xl bg-slate-900/50 border border-[var(--line)] overflow-x-auto">
+      <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-slate-900/50 border border-[var(--line)]">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+            className={`touch-target flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
               activeTab === tab.id
                 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
                 : "text-[var(--text-secondary)] hover:text-slate-100 hover:bg-slate-800/50"
