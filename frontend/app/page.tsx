@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import InstallCenter from "../components/dashboard/InstallCenter";
 
 export default function HomePage() {
   return (
@@ -71,6 +72,8 @@ export default function HomePage() {
             </p>
           </div>
         </section>
+
+        <InstallCenter />
       </div>
     </main>
   );

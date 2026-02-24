@@ -18,6 +18,19 @@ export const metadata: Metadata = {
   title: "WishShare – социальный вишлист",
   description: "Коллективные подарки и вишлисты с реальным временем",
   manifest: "/manifest.json",
+  applicationName: "WishShare",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+      { url: "/icons/icon-167x167.png", sizes: "167x167", type: "image/png" },
+      { url: "/icons/icon-152x152.png", sizes: "152x152", type: "image/png" },
+    ],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -25,18 +38,20 @@ export const metadata: Metadata = {
   },
   formatDetection: {
     telephone: false
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+    "msapplication-TileColor": "#0f172a",
   }
 };
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffb86b" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b0b0f" }
+    { media: "(prefers-color-scheme: light)", color: "#10b981" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f172a" }
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: "cover"
 };
 
@@ -56,6 +71,30 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <meta name="apple-mobile-web-app-title" content="WishShare" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="format-detection" content="telephone=no" />
+
+        {/* Dev safety: remove stale service workers/caches before Turbopack chunks load */}
+        {process.env.NODE_ENV === "development" ? (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `
+                (function () {
+                  try {
+                    if (location.hostname !== "localhost") return;
+                    if (!("serviceWorker" in navigator)) return;
+                    navigator.serviceWorker.getRegistrations().then(function (regs) {
+                      return Promise.all(regs.map(function (r) { return r.unregister(); }));
+                    }).finally(function () {
+                      if (!("caches" in window)) return;
+                      caches.keys().then(function (keys) {
+                        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+                      });
+                    });
+                  } catch (e) {}
+                })();
+              `,
+            }}
+          />
+        ) : null}
         
         {/* Splash screens for iOS (iPhone) */}
         <link rel="apple-touch-startup-image" href="/splash/iphone.png" />

@@ -16,13 +16,16 @@ function isStandaloneMode(): boolean {
   return iosStandalone || webStandalone;
 }
 
-function detectPlatform() {
+type Platform = "windows" | "mac" | "linux" | "ios" | "android" | "unknown";
+
+function detectPlatform(): Platform {
   if (typeof window === "undefined") return "unknown";
   const ua = window.navigator.userAgent.toLowerCase();
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod")) return "ios";
+  if (ua.includes("android")) return "android";
   if (ua.includes("windows")) return "windows";
   if (ua.includes("mac")) return "mac";
   if (ua.includes("linux")) return "linux";
-  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("android")) return "mobile";
   return "unknown";
 }
 
@@ -30,6 +33,7 @@ export default function InstallCenter() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [justInstalled, setJustInstalled] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showIOSHelp, setShowIOSHelp] = useState(false);
 
   useEffect(() => {
     const onBeforeInstallPrompt = (event: Event) => {
@@ -54,6 +58,11 @@ export default function InstallCenter() {
   const standalone = useMemo(() => isStandaloneMode(), []);
   const platform = useMemo(() => detectPlatform(), []);
   const canInstallAsApp = Boolean(deferredPrompt) && !standalone;
+  const isIOSInstallFlow = platform === "ios" && !standalone;
+  const canUseShareSheet =
+    isIOSInstallFlow &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function";
 
   const handleInstallApp = async () => {
     if (!deferredPrompt) return;
@@ -62,6 +71,21 @@ export default function InstallCenter() {
     if (choice.outcome === "accepted") {
       setJustInstalled(true);
       setDeferredPrompt(null);
+    }
+  };
+
+  const handleOpenIOSShare = async () => {
+    setShowIOSHelp(true);
+    if (!canUseShareSheet) return;
+
+    try {
+      await navigator.share({
+        title: "WishShare",
+        text: "Добавьте WishShare на экран Домой",
+        url: window.location.href,
+      });
+    } catch {
+      // User dismissed share sheet. Keep help visible.
     }
   };
 
@@ -100,33 +124,58 @@ export default function InstallCenter() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-        <button
-          type="button"
-          onClick={handleInstallApp}
-          disabled={!canInstallAsApp}
-          className="btn-primary text-sm touch-target disabled:opacity-50"
-          title={!canInstallAsApp ? "Откройте сайт в Edge/Chrome, чтобы активировать установку" : "Установить как приложение"}
-        >
-          {justInstalled ? "Установлено" : "Установить приложение"}
-        </button>
+        {canInstallAsApp ? (
+          <button
+            type="button"
+            onClick={handleInstallApp}
+            className="btn-primary text-sm touch-target"
+            title="Установить как приложение"
+          >
+            {justInstalled ? "Установлено" : "Установить приложение"}
+          </button>
+        ) : null}
 
-        <button type="button" onClick={handleDownloadShortcut} className="btn-ghost text-sm touch-target">
-          Скачать ярлык (Windows)
-        </button>
+        {isIOSInstallFlow ? (
+          <button
+            type="button"
+            onClick={handleOpenIOSShare}
+            className="btn-primary text-sm touch-target"
+            title="Открыть системное меню для установки на экран Домой"
+          >
+            iOS: На экран Домой
+          </button>
+        ) : null}
+
+        {platform === "windows" ? (
+          <button type="button" onClick={handleDownloadShortcut} className="btn-ghost text-sm touch-target">
+            Скачать ярлык (Windows)
+          </button>
+        ) : null}
 
         <button type="button" onClick={handleCopyLink} className="btn-ghost text-sm touch-target">
           {copied ? "Ссылка скопирована" : "Копировать ссылку"}
         </button>
       </div>
 
+      {isIOSInstallFlow || showIOSHelp ? (
+        <div className="rounded-xl border border-[var(--line-strong)] bg-black/20 px-3 py-3 text-xs text-[var(--text-secondary)] space-y-2">
+          <p className="font-medium text-[var(--text-primary)]">Установка на iPhone/iPad:</p>
+          <ol className="list-decimal pl-4 space-y-1">
+            <li>Нажмите кнопку «iOS: На экран Домой» или значок «Поделиться» в браузере.</li>
+            <li>В меню выберите «На экран Домой».</li>
+            <li>Подтвердите название «WishShare» и нажмите «Добавить».</li>
+          </ol>
+        </div>
+      ) : null}
+
       <div className="text-xs text-[var(--text-secondary)] rounded-xl border border-[var(--line)] bg-black/15 px-3 py-2">
         {platform === "windows" && "Windows: после скачивания перетащите WishShare.url на рабочий стол и закрепите в панели задач."}
         {platform === "mac" && "macOS: используйте меню браузера «Установить приложение» или перетащите вкладку на рабочий стол."}
         {platform === "linux" && "Linux: используйте «Установить приложение» в браузере или создайте desktop launcher через системное меню."}
-        {platform === "mobile" && "Телефон: откройте меню браузера и выберите «Добавить на главный экран»."}
+        {platform === "ios" && "iOS: добавляйте WishShare через «Поделиться» → «На экран Домой»."}
+        {platform === "android" && "Android: используйте кнопку «Установить приложение» или «Добавить на главный экран» в браузере."}
         {platform === "unknown" && "Используйте установку приложения в Edge/Chrome или скачайте ярлык для рабочего стола."}
       </div>
     </section>
   );
 }
-

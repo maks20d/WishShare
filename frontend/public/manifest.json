@@ -1,13 +1,15 @@
 {
-  "name": "WishShare",
+  "name": "WishShare - Социальный вишлист",
   "short_name": "WishShare",
-  "description": "Социальный вишлист с коллективными сборами — создавайте списки желаний и делитесь ими",
+  "description": "Создавай вишлисты и делись ими с друзьями",
+  "id": "/",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b0b0f",
-  "theme_color": "#ffb86b",
+  "background_color": "#0f172a",
+  "theme_color": "#10b981",
   "orientation": "portrait-primary",
   "scope": "/",
+  "lang": "ru",
   "prefer_related_applications": false,
   "icons": [
     {
@@ -71,41 +73,32 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["lifestyle", "shopping", "social"],
+  "categories": ["social", "lifestyle"],
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui", "browser"],
   "shortcuts": [
     {
       "name": "Мои вишлисты",
       "short_name": "Вишлисты",
       "url": "/dashboard",
-      "description": "Открыть панель управления вишлистами",
       "icons": [
         {
-          "src": "/icons/shortcut-wishlist.png",
-          "sizes": "96x96"
+          "src": "/icons/icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
         }
       ]
     },
     {
       "name": "Создать вишлист",
       "short_name": "Создать",
-      "url": "/dashboard?action=create",
-      "description": "Создать новый вишлист"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshots/dashboard.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "Панель управления вишлистами"
-    },
-    {
-      "src": "/screenshots/mobile.png",
-      "sizes": "750x1334",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Мобильный вид"
+      "url": "/dashboard",
+      "icons": [
+        {
+          "src": "/icons/icon-96x96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }
