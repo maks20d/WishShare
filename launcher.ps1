@@ -18,6 +18,14 @@ function Write-Ok([string]$Message) { Write-Host "[OK] $Message" }
 function Write-Warn([string]$Message) { Write-Host "[WARN] $Message" }
 function Write-Err([string]$Message) { Write-Host "[ERROR] $Message" }
 
+function Ensure-LogDir {
+  $logDir = Join-Path $Root ".logs"
+  if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+  }
+  return $logDir
+}
+
 function Ensure-Python {
   if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python not found in PATH."
@@ -134,6 +142,39 @@ function Reset-FrontendDevCache {
   }
 }
 
+function Wait-ForCondition(
+  [scriptblock]$Condition,
+  [string]$Name,
+  [int]$TimeoutSec = 60,
+  [int]$IntervalMs = 1000
+) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    if (& $Condition) { return $true }
+    Start-Sleep -Milliseconds $IntervalMs
+  }
+  Write-Warn "Timeout while waiting for $Name."
+  return $false
+}
+
+function Test-BackendHealthy {
+  try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method Get -TimeoutSec 3
+    return ($health.status -eq "ok")
+  } catch {
+    return $false
+  }
+}
+
+function Test-FrontendReady {
+  try {
+    $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000" -Method Get -TimeoutSec 3 -UseBasicParsing
+    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+  } catch {
+    return $false
+  }
+}
+
 function Stop-AppPorts {
   Write-Info "Stopping app ports (3000/8000)..."
   foreach ($port in @(3000, 8000)) {
@@ -169,6 +210,41 @@ function Start-Backend {
   Start-Process -FilePath "cmd.exe" -ArgumentList "/k", $cmd | Out-Null
 }
 
+function Start-BackendService {
+  Ensure-BackendDeps
+  if (Test-BackendHealthy) {
+    Write-Info "Backend already running."
+    return
+  }
+
+  if (Test-PortInUse 8000) {
+    Write-Warn "Port 8000 is busy but backend healthcheck failed. Releasing port..."
+    foreach ($procId in (Get-PortPids -Port 8000)) {
+      Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  $logDir = Ensure-LogDir
+  $backendOut = Join-Path $logDir "backend.out.log"
+  $backendErr = Join-Path $logDir "backend.err.log"
+
+  Write-Info "Starting backend service..."
+  Start-Process `
+    -FilePath $VenvPy `
+    -ArgumentList "entrypoint.py" `
+    -WorkingDirectory $BackendDir `
+    -RedirectStandardOutput $backendOut `
+    -RedirectStandardError $backendErr `
+    -WindowStyle Hidden | Out-Null
+
+  if (-not (Wait-ForCondition -Condition { Test-BackendHealthy } -Name "backend" -TimeoutSec 45)) {
+    throw "Backend failed to start. Check logs in .logs/backend.err.log"
+  }
+
+  Write-Ok "Backend is ready."
+}
+
 function Start-Frontend {
   Reset-FrontendDevCache
   Ensure-FrontendDeps
@@ -181,6 +257,65 @@ function Start-Frontend {
   Start-Process -FilePath "cmd.exe" -ArgumentList "/k", $cmd | Out-Null
   Start-Sleep -Milliseconds 700
   Open-FrontendUrl
+}
+
+function Ensure-FrontendBuild {
+  $buildId = Join-Path $FrontendDir ".next\BUILD_ID"
+  if (Test-Path -LiteralPath $buildId) {
+    return
+  }
+  Write-Info "Frontend production build not found. Building..."
+  Build-Frontend
+}
+
+function Start-FrontendService {
+  Ensure-FrontendDeps
+  Ensure-FrontendBuild
+
+  if (Test-FrontendReady) {
+    Write-Info "Frontend already running."
+    return
+  }
+
+  if (Test-PortInUse 3000) {
+    Write-Warn "Port 3000 is busy but frontend probe failed. Releasing port..."
+    foreach ($procId in (Get-PortPids -Port 3000)) {
+      Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  $logDir = Ensure-LogDir
+  $frontendOut = Join-Path $logDir "frontend.out.log"
+  $frontendErr = Join-Path $logDir "frontend.err.log"
+  $nodeCmd = Get-Command node -ErrorAction Stop
+  $npmCmd = Join-Path (Split-Path $nodeCmd.Source -Parent) "npm.cmd"
+  if (-not (Test-Path -LiteralPath $npmCmd)) {
+    throw "npm.cmd not found near node.exe"
+  }
+
+  Write-Info "Starting frontend service..."
+  Start-Process `
+    -FilePath $npmCmd `
+    -ArgumentList @("run", "start", "--", "--port", "3000") `
+    -WorkingDirectory $FrontendDir `
+    -RedirectStandardOutput $frontendOut `
+    -RedirectStandardError $frontendErr `
+    -WindowStyle Hidden | Out-Null
+
+  if (-not (Wait-ForCondition -Condition { Test-FrontendReady } -Name "frontend" -TimeoutSec 60)) {
+    throw "Frontend failed to start. Check logs in .logs/frontend.err.log"
+  }
+
+  Write-Ok "Frontend is ready."
+}
+
+function Start-App {
+  Write-Info "Launching WishShare app mode..."
+  Start-BackendService
+  Start-FrontendService
+  Open-FrontendUrl
+  Write-Ok "WishShare app launched."
 }
 
 function Build-Frontend {
@@ -318,20 +453,15 @@ function Open-FrontendUrl {
 }
 
 function Create-DesktopShortcut {
-  $browserPath = Get-AppModeBrowserPath
-  if (-not $browserPath) {
-    throw "Chrome/Edge not found. Install Chrome or Edge to create app-mode shortcut."
-  }
-
   $desktop = [Environment]::GetFolderPath("Desktop")
   $shortcutPath = Join-Path $desktop "WishShare.lnk"
 
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath = $browserPath
-  $shortcut.Arguments = "--app=http://localhost:3000 --new-window"
+  $shortcut.TargetPath = Join-Path $Root "run.bat"
+  $shortcut.Arguments = "app"
   $shortcut.WorkingDirectory = $Root
-  $shortcut.Description = "WishShare (opens in separate app window)"
+  $shortcut.Description = "WishShare (auto-start backend/frontend and open app window)"
 
   $iconPath = Join-Path $FrontendDir "public\favicon.ico"
   if (Test-Path -LiteralPath $iconPath) {
@@ -339,16 +469,16 @@ function Create-DesktopShortcut {
     if ($iconFile -and $iconFile.Length -gt 0) {
       $shortcut.IconLocation = $iconPath
     } else {
-      $shortcut.IconLocation = $browserPath
+      $shortcut.IconLocation = "$env:SystemRoot\System32\SHELL32.dll,220"
     }
   } else {
-    $shortcut.IconLocation = $browserPath
+    $shortcut.IconLocation = "$env:SystemRoot\System32\SHELL32.dll,220"
   }
 
   $shortcut.Save()
 
   Write-Ok "Desktop shortcut created: $shortcutPath"
-  Write-Info "Shortcut opens WishShare in a separate browser app window."
+  Write-Info "Shortcut now auto-starts backend/frontend and opens WishShare app window."
 }
 
 function Generate-Jwt {
@@ -435,7 +565,7 @@ function Show-Ports {
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  run.bat dev|backend|frontend|build|test [sync]"
+  Write-Host "  run.bat app|dev|backend|frontend|build|test [sync]"
   Write-Host "  run.bat stop|ports|prereq|clean|env|jwt|shortcut"
   Write-Host "  run.bat docker-dev|docker-prod|docker-stop|docker-logs"
   Write-Host "  run.bat help"
@@ -444,6 +574,7 @@ function Show-Usage {
 function Invoke-CommandByName([string]$CmdName) {
   switch ($CmdName.ToLowerInvariant()) {
     "help" { Show-Usage }
+    "app" { Start-App }
     "dev" { Start-Backend; Start-Frontend; Write-Ok "Development environment started." }
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
@@ -481,20 +612,21 @@ function Show-Menu {
   Write-Host ("| " + $statusText.PadRight(59) + "|") -ForegroundColor DarkGray
   Write-Host $line -ForegroundColor DarkCyan
   Write-Host "| START                                                       |" -ForegroundColor Yellow
-  Write-Host "|  1) dev        Start backend + frontend                     |"
-  Write-Host "|  2) backend    Start backend only                           |"
-  Write-Host "|  3) frontend   Start frontend only                          |"
-  Write-Host "|  4) stop       Stop app ports (3000/8000)                  |"
-  Write-Host "|  5) ports      Show ports status                            |"
+  Write-Host "|  1) app        One-click launch (auto-start services)       |"
+  Write-Host "|  2) dev        Start backend + frontend (dev mode)          |"
+  Write-Host "|  3) backend    Start backend only                           |"
+  Write-Host "|  4) frontend   Start frontend only                          |"
+  Write-Host "|  5) stop       Stop app ports (3000/8000)                  |"
+  Write-Host "|  6) ports      Show ports status                            |"
   Write-Host "|                                                             |"
   Write-Host "| MAINTENANCE                                                 |" -ForegroundColor Yellow
-  Write-Host "|  6) build      Frontend production build                    |"
-  Write-Host "|  7) test       Backend + frontend tests                     |"
-  Write-Host "|  8) prereq     Prerequisites check                          |"
-  Write-Host "|  9) env        Create .env from .env.example               |"
-  Write-Host "| 10) jwt        Generate JWT secret key                      |"
-  Write-Host "| 11) clean      Clean caches                                 |"
-  Write-Host "| 12) shortcut   Create desktop app shortcut                  |"
+  Write-Host "|  7) build      Frontend production build                    |"
+  Write-Host "|  8) test       Backend + frontend tests                     |"
+  Write-Host "|  9) prereq     Prerequisites check                          |"
+  Write-Host "| 10) env        Create .env from .env.example               |"
+  Write-Host "| 11) jwt        Generate JWT secret key                      |"
+  Write-Host "| 12) clean      Clean caches                                 |"
+  Write-Host "| 13) shortcut   Create desktop app shortcut                  |"
   Write-Host "|                                                             |"
   Write-Host "| HELP: run.bat help                                          |" -ForegroundColor DarkGray
   Write-Host "| ADVANCED (CLI): docker-dev, docker-prod, docker-stop, logs |" -ForegroundColor DarkGray
@@ -516,18 +648,19 @@ if (-not $Command) {
     if ($null -eq $choice) { continue }
 
     $mapped = switch ($choice.Trim().ToUpperInvariant()) {
-      "1" { "dev" }
-      "2" { "backend" }
-      "3" { "frontend" }
-      "4" { "stop" }
-      "5" { "ports" }
-      "6" { "build" }
-      "7" { "test" }
-      "8" { "prereq" }
-      "9" { "env" }
-      "10" { "jwt" }
-      "11" { "clean" }
-      "12" { "shortcut" }
+      "1" { "app" }
+      "2" { "dev" }
+      "3" { "backend" }
+      "4" { "frontend" }
+      "5" { "stop" }
+      "6" { "ports" }
+      "7" { "build" }
+      "8" { "test" }
+      "9" { "prereq" }
+      "10" { "env" }
+      "11" { "jwt" }
+      "12" { "clean" }
+      "13" { "shortcut" }
       "Q" { "quit" }
       default { "" }
     }
