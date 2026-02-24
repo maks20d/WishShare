@@ -11,7 +11,8 @@ $BackendDir = Join-Path $Root "backend"
 $FrontendDir = Join-Path $Root "frontend"
 $VenvDir = Join-Path $BackendDir ".venv"
 $VenvPy = Join-Path $VenvDir "Scripts\python.exe"
-$ForceSync = ($Arg1 -ieq "sync" -or $Arg2 -ieq "sync")
+$script:ForceSync = ($Arg1 -ieq "sync" -or $Arg2 -ieq "sync")
+$script:AppUpdated = $false
 
 function Write-Info([string]$Message) { Write-Host "[INFO] $Message" }
 function Write-Ok([string]$Message) { Write-Host "[OK] $Message" }
@@ -89,7 +90,7 @@ function Ensure-BackendDeps {
   }
 
   $depsMarker = Join-Path $VenvDir ".deps_installed"
-  if ($ForceSync -and (Test-Path -LiteralPath $depsMarker)) {
+  if ($script:ForceSync -and (Test-Path -LiteralPath $depsMarker)) {
     Remove-Item -LiteralPath $depsMarker -Force -ErrorAction SilentlyContinue
   }
 
@@ -112,7 +113,7 @@ function Ensure-FrontendDeps {
   Ensure-Node
 
   $nodeModules = Join-Path $FrontendDir "node_modules"
-  if ($ForceSync -and (Test-Path -LiteralPath $nodeModules)) {
+  if ($script:ForceSync -and (Test-Path -LiteralPath $nodeModules)) {
     Remove-Item -LiteralPath $nodeModules -Recurse -Force -ErrorAction SilentlyContinue
   }
 
@@ -166,6 +167,84 @@ function Test-BackendHealthy {
   }
 }
 
+function Test-BackendDbHealthy {
+  try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health/db" -Method Get -TimeoutSec 3
+    return ($health.status -eq "ok")
+  } catch {
+    return $false
+  }
+}
+
+function Sync-AppCode {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Warn "Git not found. Skipping app auto-update."
+    return
+  }
+
+  Push-Location $Root
+  try {
+    $status = (& git status --porcelain).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($status)) {
+      Write-Warn "Working tree has local changes. Skipping auto-update."
+      return
+    }
+
+    Write-Info "Checking for updates on origin/main..."
+    & git fetch origin main --quiet
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn "git fetch failed. Continuing with local code."
+      return
+    }
+
+    $localHead = (& git rev-parse HEAD).Trim()
+    $remoteHead = (& git rev-parse origin/main).Trim()
+    if ($localHead -eq $remoteHead) {
+      Write-Info "App code is up to date."
+      return
+    }
+
+    $mergeBase = (& git merge-base HEAD origin/main).Trim()
+    if ($localHead -ne $mergeBase) {
+      Write-Warn "Local branch is ahead/diverged from origin/main. Skipping auto-update."
+      return
+    }
+
+    Write-Info "Updating app code (fast-forward)..."
+    & git pull --ff-only origin main
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn "git pull failed. Continuing with local code."
+      return
+    }
+
+    $script:AppUpdated = $true
+    $script:ForceSync = $true
+    Write-Ok "App code updated from origin/main."
+  } finally {
+    Pop-Location
+  }
+}
+
+function Ensure-BackendMigrations {
+  $alembicIni = Join-Path $BackendDir "alembic.ini"
+  if (-not (Test-Path -LiteralPath $alembicIni)) {
+    Write-Warn "alembic.ini not found. Skipping migrations."
+    return
+  }
+
+  Write-Info "Applying backend migrations..."
+  Push-Location $BackendDir
+  try {
+    & $VenvPy -m alembic -c $alembicIni upgrade head
+    if ($LASTEXITCODE -ne 0) {
+      throw "Backend migrations failed."
+    }
+  } finally {
+    Pop-Location
+  }
+  Write-Ok "Backend migrations are up to date."
+}
+
 function Test-FrontendReady {
   try {
     $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000" -Method Get -TimeoutSec 3 -UseBasicParsing
@@ -199,6 +278,22 @@ function Stop-AppPorts {
   throw "Failed to free one or more ports."
 }
 
+function Stop-ServiceByPid([int]$ProcessId, [string]$Name) {
+  if ($ProcessId -le 0) {
+    return
+  }
+
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    Write-Ok ("Stopped {0} process PID {1}." -f $Name, $ProcessId)
+  } catch {
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $proc) {
+      Write-Warn ("Failed to stop {0} process PID {1}: {2}" -f $Name, $ProcessId, $_.Exception.Message)
+    }
+  }
+}
+
 function Start-Backend {
   Ensure-BackendDeps
   if (Test-PortInUse 8000) {
@@ -212,10 +307,16 @@ function Start-Backend {
 
 function Start-BackendService {
   Ensure-BackendDeps
+
   if (Test-BackendHealthy) {
     Write-Info "Backend already running."
-    return
+    if (-not (Wait-ForCondition -Condition { Test-BackendDbHealthy } -Name "backend db health" -TimeoutSec 20)) {
+      Write-Warn "Backend is running but /health/db did not become ready."
+    }
+    return [pscustomobject]@{ StartedNow = $false; PID = $null }
   }
+
+  Ensure-BackendMigrations
 
   if (Test-PortInUse 8000) {
     Write-Warn "Port 8000 is busy but backend healthcheck failed. Releasing port..."
@@ -230,19 +331,27 @@ function Start-BackendService {
   $backendErr = Join-Path $logDir "backend.err.log"
 
   Write-Info "Starting backend service..."
-  Start-Process `
+  $process = Start-Process `
     -FilePath $VenvPy `
     -ArgumentList "entrypoint.py" `
     -WorkingDirectory $BackendDir `
     -RedirectStandardOutput $backendOut `
     -RedirectStandardError $backendErr `
-    -WindowStyle Hidden | Out-Null
+    -WindowStyle Hidden `
+    -PassThru
 
   if (-not (Wait-ForCondition -Condition { Test-BackendHealthy } -Name "backend" -TimeoutSec 45)) {
+    Stop-ServiceByPid -ProcessId $process.Id -Name "backend"
     throw "Backend failed to start. Check logs in .logs/backend.err.log"
   }
 
+  if (-not (Wait-ForCondition -Condition { Test-BackendDbHealthy } -Name "backend db health" -TimeoutSec 30)) {
+    Stop-ServiceByPid -ProcessId $process.Id -Name "backend"
+    throw "Backend started but database healthcheck failed. Check backend logs."
+  }
+
   Write-Ok "Backend is ready."
+  return [pscustomobject]@{ StartedNow = $true; PID = $process.Id }
 }
 
 function Start-Frontend {
@@ -261,10 +370,14 @@ function Start-Frontend {
 
 function Ensure-FrontendBuild {
   $buildId = Join-Path $FrontendDir ".next\BUILD_ID"
-  if (Test-Path -LiteralPath $buildId) {
+  if ((-not $script:AppUpdated) -and (Test-Path -LiteralPath $buildId)) {
     return
   }
-  Write-Info "Frontend production build not found. Building..."
+  if ($script:AppUpdated) {
+    Write-Info "App code updated. Rebuilding frontend..."
+  } else {
+    Write-Info "Frontend production build not found. Building..."
+  }
   Build-Frontend
 }
 
@@ -274,7 +387,7 @@ function Start-FrontendService {
 
   if (Test-FrontendReady) {
     Write-Info "Frontend already running."
-    return
+    return [pscustomobject]@{ StartedNow = $false; PID = $null }
   }
 
   if (Test-PortInUse 3000) {
@@ -289,33 +402,60 @@ function Start-FrontendService {
   $frontendOut = Join-Path $logDir "frontend.out.log"
   $frontendErr = Join-Path $logDir "frontend.err.log"
   $nodeCmd = Get-Command node -ErrorAction Stop
-  $npmCmd = Join-Path (Split-Path $nodeCmd.Source -Parent) "npm.cmd"
-  if (-not (Test-Path -LiteralPath $npmCmd)) {
-    throw "npm.cmd not found near node.exe"
+  $nextCli = Join-Path $FrontendDir "node_modules\next\dist\bin\next"
+  if (-not (Test-Path -LiteralPath $nextCli)) {
+    throw "Next.js CLI not found: $nextCli"
   }
 
   Write-Info "Starting frontend service..."
-  Start-Process `
-    -FilePath $npmCmd `
-    -ArgumentList @("run", "start", "--", "--port", "3000") `
+  $process = Start-Process `
+    -FilePath $nodeCmd.Source `
+    -ArgumentList @($nextCli, "start", "--port", "3000") `
     -WorkingDirectory $FrontendDir `
     -RedirectStandardOutput $frontendOut `
     -RedirectStandardError $frontendErr `
-    -WindowStyle Hidden | Out-Null
+    -WindowStyle Hidden `
+    -PassThru
 
   if (-not (Wait-ForCondition -Condition { Test-FrontendReady } -Name "frontend" -TimeoutSec 60)) {
+    Stop-ServiceByPid -ProcessId $process.Id -Name "frontend"
     throw "Frontend failed to start. Check logs in .logs/frontend.err.log"
   }
 
   Write-Ok "Frontend is ready."
+  return [pscustomobject]@{ StartedNow = $true; PID = $process.Id }
 }
 
 function Start-App {
   Write-Info "Launching WishShare app mode..."
-  Start-BackendService
-  Start-FrontendService
-  Open-FrontendUrl
-  Write-Ok "WishShare app launched."
+  Sync-AppCode
+
+  $backendState = $null
+  $frontendState = $null
+  $appWindow = $null
+
+  try {
+    $backendState = Start-BackendService
+    $frontendState = Start-FrontendService
+    $appWindow = Open-AppWindow
+
+    if ($null -ne $appWindow) {
+      Write-Ok "WishShare app launched. Close the app window to stop local services."
+      Wait-Process -Id $appWindow.Id
+    } else {
+      Write-Warn "App window process is not trackable. Press Enter to stop services started by app mode."
+      [void](Read-Host)
+    }
+  } finally {
+    if ($frontendState -and $frontendState.StartedNow -and $frontendState.PID) {
+      Stop-ServiceByPid -ProcessId ([int]$frontendState.PID) -Name "frontend"
+    }
+    if ($backendState -and $backendState.StartedNow -and $backendState.PID) {
+      Stop-ServiceByPid -ProcessId ([int]$backendState.PID) -Name "backend"
+    }
+  }
+
+  Write-Ok "WishShare app stopped."
 }
 
 function Build-Frontend {
@@ -439,17 +579,32 @@ function Get-AppModeBrowserPath {
   return $null
 }
 
-function Open-FrontendUrl {
+function Open-AppWindow {
   $url = "http://localhost:3000"
   $browserPath = Get-AppModeBrowserPath
 
   if ($browserPath) {
-    Start-Process -FilePath $browserPath -ArgumentList @("--app=$url", "--new-window") | Out-Null
-    return
+    $profileDir = Join-Path $Root ".app-profile"
+    if (-not (Test-Path -LiteralPath $profileDir)) {
+      New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+    }
+
+    return Start-Process `
+      -FilePath $browserPath `
+      -ArgumentList @("--app=$url", "--new-window", "--user-data-dir=$profileDir") `
+      -PassThru
   }
 
-  Write-Warn "Chrome/Edge not found. Opening default browser."
+  Write-Warn "Chrome/Edge not found. Opening default browser without lifecycle tracking."
   Start-Process $url | Out-Null
+  return $null
+}
+
+function Open-FrontendUrl {
+  $window = Open-AppWindow
+  if ($null -eq $window) {
+    return
+  }
 }
 
 function Create-DesktopShortcut {
@@ -566,6 +721,7 @@ function Show-Ports {
 function Show-Usage {
   Write-Host "Usage:"
   Write-Host "  run.bat app|dev|backend|frontend|build|test [sync]"
+  Write-Host "  app mode: auto-update (clean git), migrate DB, stop started services on window close"
   Write-Host "  run.bat stop|ports|prereq|clean|env|jwt|shortcut"
   Write-Host "  run.bat docker-dev|docker-prod|docker-stop|docker-logs"
   Write-Host "  run.bat help"
@@ -612,7 +768,7 @@ function Show-Menu {
   Write-Host ("| " + $statusText.PadRight(59) + "|") -ForegroundColor DarkGray
   Write-Host $line -ForegroundColor DarkCyan
   Write-Host "| START                                                       |" -ForegroundColor Yellow
-  Write-Host "|  1) app        One-click launch (auto-start services)       |"
+  Write-Host "|  1) app        One-click app (auto-update + auto-stop)      |"
   Write-Host "|  2) dev        Start backend + frontend (dev mode)          |"
   Write-Host "|  3) backend    Start backend only                           |"
   Write-Host "|  4) frontend   Start frontend only                          |"
@@ -693,3 +849,4 @@ try {
   Show-Usage
   exit 1
 }
+
