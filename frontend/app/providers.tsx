@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactNode, useState, useEffect } from "react";
+import { useReportWebVitals } from "next/web-vitals";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ToastProvider } from "../components/Toast";
 import InstallPrompt from "../components/InstallPrompt";
@@ -43,8 +44,38 @@ function SessionBootstrap() {
   );
 }
 
+function WebVitalsReporter() {
+  useReportWebVitals((metric) => {
+    const payload = {
+      name: metric.name,
+      value: metric.value,
+      rating: metric.rating,
+      id: metric.id,
+      navigationType: metric.navigationType
+    };
+    fetch("/api/metrics/web-vitals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true
+    }).catch(() => undefined);
+  });
+
+  return null;
+}
+
 export function AppProviders({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: false,
+          },
+        },
+      })
+  );
 
   // Register Service Worker for PWA
   useEffect(() => {
@@ -57,6 +88,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ErrorBoundary>
           <SwipeNavigationProvider>
             <SessionBootstrap />
+            <WebVitalsReporter />
             {children}
             <InstallPrompt />
           </SwipeNavigationProvider>

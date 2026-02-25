@@ -6,7 +6,6 @@ import re
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
 
@@ -494,7 +493,6 @@ async def list_my_wishlists(
     try:
         wl_result = await db.execute(
             select(Wishlist)
-            .options(selectinload(Wishlist.access_emails))
             .where(Wishlist.owner_id == current_user.id)
             .order_by(Wishlist.created_at.desc())
             .limit(limit)
@@ -550,10 +548,15 @@ async def list_my_wishlists(
     contrib_by_gift: dict[int, list[Contribution]] = {gid: [] for gid in gift_ids}
     user_lookup: dict[int, User] = {}
 
-    access_emails_by_wl: dict[int, list[str]] = {
-        wishlist.id: [ae.email for ae in wishlist.access_emails if ae.email]
-        for wishlist in wishlists
-    }
+    access_emails_by_wl: dict[int, list[str]] = {wid: [] for wid in wishlist_ids}
+    ae_result = await db.execute(
+        select(WishlistAccessEmail)
+        .where(WishlistAccessEmail.wishlist_id.in_(wishlist_ids))
+        .order_by(WishlistAccessEmail.email.asc())
+    )
+    for ae in ae_result.scalars().unique():
+        if ae.email:
+            access_emails_by_wl[ae.wishlist_id].append(ae.email)
 
     # ── Assemble results ─────────────────────────────────────────────────────
     result_list: list[WishlistPublic] = []
