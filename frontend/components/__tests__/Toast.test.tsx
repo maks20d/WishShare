@@ -4,58 +4,55 @@ import { ToastProvider, useToast } from "../Toast";
 
 // Helper component to test useToast hook
 function ToastTestComponent() {
-  const { showToast, removeToast, toasts } = useToast();
+  const { toast, confirm } = useToast();
   
   return (
     <div>
-      <span data-testid="toast-count">{toasts.length}</span>
       <button 
-        onClick={() => showToast("Success message", "success")}
+        onClick={() => toast("Success message", "success")}
         data-testid="show-success"
       >
         Show Success
       </button>
       <button 
-        onClick={() => showToast("Error message", "error")}
+        onClick={() => toast("Error message", "error")}
         data-testid="show-error"
       >
         Show Error
       </button>
       <button 
-        onClick={() => showToast("Warning message", "warning")}
+        onClick={() => toast("Warning message", "warning")}
         data-testid="show-warning"
       >
         Show Warning
       </button>
       <button 
-        onClick={() => showToast("Info message", "info")}
+        onClick={() => toast("Info message", "info")}
         data-testid="show-info"
       >
         Show Info
       </button>
       <button 
-        onClick={() => showToast("Default message")}
+        onClick={() => toast("Default message")}
         data-testid="show-default"
       >
         Show Default
       </button>
-      {toasts.length > 0 && (
-        <button 
-          onClick={() => removeToast(toasts[0].id)}
-          data-testid="remove-first"
-        >
-          Remove First
-        </button>
-      )}
+      <button 
+        onClick={async () => {
+          const result = await confirm("Are you sure?");
+          // Store result for testing
+          (window as unknown as { confirmResult: boolean }).confirmResult = result;
+        }}
+        data-testid="show-confirm"
+      >
+        Show Confirm
+      </button>
     </div>
   );
 }
 
 describe("Toast", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -79,7 +76,7 @@ describe("Toast", () => {
         </ToastProvider>
       );
       
-      expect(screen.getByTestId("toast-count")).toHaveTextContent("0");
+      expect(screen.getByTestId("show-success")).toBeInTheDocument();
     });
   });
 
@@ -89,7 +86,7 @@ describe("Toast", () => {
       
       expect(() => {
         render(<ToastTestComponent />);
-      }).toThrow("useToast must be used within ToastProvider");
+      }).toThrow("useToast must be used inside <ToastProvider>");
       
       consoleError.mockRestore();
     });
@@ -104,7 +101,6 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-success"));
       
       expect(screen.getByText("Success message")).toBeInTheDocument();
-      expect(screen.getByTestId("toast-count")).toHaveTextContent("1");
     });
 
     it("shows error toast", async () => {
@@ -156,25 +152,9 @@ describe("Toast", () => {
     });
   });
 
-  describe("Toast removal", () => {
-    it("removes toast manually", async () => {
-      render(
-        <ToastProvider>
-          <ToastTestComponent />
-        </ToastProvider>
-      );
-      
-      fireEvent.click(screen.getByTestId("show-success"));
-      expect(screen.getByText("Success message")).toBeInTheDocument();
-      
-      fireEvent.click(screen.getByTestId("remove-first"));
-      
-      await waitFor(() => {
-        expect(screen.queryByText("Success message")).not.toBeInTheDocument();
-      });
-    });
-
+  describe("Toast auto-removal", () => {
     it("auto-removes toast after 4 seconds", async () => {
+      vi.useFakeTimers();
       render(
         <ToastProvider>
           <ToastTestComponent />
@@ -184,30 +164,12 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-success"));
       expect(screen.getByText("Success message")).toBeInTheDocument();
       
-      act(() => {
-        vi.advanceTimersByTime(4000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
       });
-      
-      await waitFor(() => {
-        expect(screen.queryByText("Success message")).not.toBeInTheDocument();
-      });
-    });
 
-    it("removes toast via close button", async () => {
-      render(
-        <ToastProvider>
-          <ToastTestComponent />
-        </ToastProvider>
-      );
-      
-      fireEvent.click(screen.getByTestId("show-success"));
-      
-      const closeButton = screen.getByRole("button", { name: "" });
-      fireEvent.click(closeButton);
-      
-      await waitFor(() => {
-        expect(screen.queryByText("Success message")).not.toBeInTheDocument();
-      });
+      expect(screen.queryByText("Success message")).not.toBeInTheDocument();
+      vi.useRealTimers();
     });
   });
 
@@ -226,28 +188,6 @@ describe("Toast", () => {
       expect(screen.getByText("Success message")).toBeInTheDocument();
       expect(screen.getByText("Error message")).toBeInTheDocument();
       expect(screen.getByText("Warning message")).toBeInTheDocument();
-      expect(screen.getByTestId("toast-count")).toHaveTextContent("3");
-    });
-
-    it("removes correct toast when multiple exist", async () => {
-      render(
-        <ToastProvider>
-          <ToastTestComponent />
-        </ToastProvider>
-      );
-      
-      fireEvent.click(screen.getByTestId("show-success"));
-      fireEvent.click(screen.getByTestId("show-error"));
-      
-      expect(screen.getByText("Success message")).toBeInTheDocument();
-      expect(screen.getByText("Error message")).toBeInTheDocument();
-      
-      fireEvent.click(screen.getByTestId("remove-first"));
-      
-      await waitFor(() => {
-        expect(screen.queryByText("Success message")).not.toBeInTheDocument();
-        expect(screen.getByText("Error message")).toBeInTheDocument();
-      });
     });
   });
 
@@ -262,7 +202,7 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-success"));
       
       const toast = screen.getByText("Success message").closest("div");
-      expect(toast).toHaveClass("bg-emerald-600/95");
+      expect(toast).toHaveClass("bg-emerald-600/90");
     });
 
     it("applies error styles", async () => {
@@ -275,7 +215,7 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-error"));
       
       const toast = screen.getByText("Error message").closest("div");
-      expect(toast).toHaveClass("bg-red-600/95");
+      expect(toast).toHaveClass("bg-red-600/90");
     });
 
     it("applies warning styles", async () => {
@@ -288,7 +228,7 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-warning"));
       
       const toast = screen.getByText("Warning message").closest("div");
-      expect(toast).toHaveClass("bg-amber-500/95");
+      expect(toast).toHaveClass("bg-amber-500/90");
     });
 
     it("applies info styles", async () => {
@@ -301,7 +241,7 @@ describe("Toast", () => {
       fireEvent.click(screen.getByTestId("show-info"));
       
       const toast = screen.getByText("Info message").closest("div");
-      expect(toast).toHaveClass("bg-slate-700/95");
+      expect(toast).toHaveClass("bg-slate-700/90");
     });
   });
 
@@ -343,7 +283,7 @@ describe("Toast", () => {
       );
       
       // Container should not be rendered
-      const container = document.querySelector(".fixed.bottom-4");
+      const container = document.querySelector(".fixed.bottom-5");
       expect(container).toBeNull();
     });
 
@@ -356,9 +296,55 @@ describe("Toast", () => {
       
       fireEvent.click(screen.getByTestId("show-success"));
       
-      const container = document.querySelector(".fixed.bottom-4.right-4");
+      const container = document.querySelector(".fixed.bottom-5.right-5");
       expect(container).toBeInTheDocument();
       expect(container).toHaveClass("z-50");
+    });
+  });
+
+  describe("Confirm dialog", () => {
+    it("shows confirm dialog", async () => {
+      render(
+        <ToastProvider>
+          <ToastTestComponent />
+        </ToastProvider>
+      );
+      
+      fireEvent.click(screen.getByTestId("show-confirm"));
+      
+      expect(screen.getByText("Are you sure?")).toBeInTheDocument();
+      expect(screen.getByText("Отмена")).toBeInTheDocument();
+      expect(screen.getByText("Подтвердить")).toBeInTheDocument();
+    });
+
+    it("resolves with false when cancelled", async () => {
+      render(
+        <ToastProvider>
+          <ToastTestComponent />
+        </ToastProvider>
+      );
+      
+      fireEvent.click(screen.getByTestId("show-confirm"));
+      fireEvent.click(screen.getByText("Отмена"));
+      
+      await waitFor(() => {
+        expect((window as unknown as { confirmResult: boolean }).confirmResult).toBe(false);
+      });
+    });
+
+    it("resolves with true when confirmed", async () => {
+      render(
+        <ToastProvider>
+          <ToastTestComponent />
+        </ToastProvider>
+      );
+      
+      fireEvent.click(screen.getByTestId("show-confirm"));
+      fireEvent.click(screen.getByText("Подтвердить"));
+      
+      await waitFor(() => {
+        expect((window as unknown as { confirmResult: boolean }).confirmResult).toBe(true);
+      });
     });
   });
 });

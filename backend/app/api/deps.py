@@ -44,7 +44,7 @@ async def get_current_user(
     logger.debug("get_current_user: token found, length=%d", len(token) if token else 0)
     
     payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
+    if not payload or payload.get("type") != "access" or "sub" not in payload:
         logger.info("Auth token invalid path=%s", request.url.path)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
@@ -85,13 +85,20 @@ async def get_optional_user(
         return None
 
     payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
+    if not payload or payload.get("type") != "access" or "sub" not in payload:
         return None
 
     try:
         user_id = int(payload["sub"])
     except (TypeError, ValueError):
         return None
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    
+    # FIX: Added try-except for DB exceptions, similar to get_current_user
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+    except Exception as e:
+        logger.exception("get_optional_user: DB error when fetching user_id=%s", user_id)
+        return None
+    
     return user

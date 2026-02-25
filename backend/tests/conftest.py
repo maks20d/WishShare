@@ -1,15 +1,27 @@
 import pytest
 import os
+import warnings
 
 # Set environment variables BEFORE importing app modules
 os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["POSTGRES_DSN"] = "sqlite+aiosqlite:///file:wishshare_tests?mode=memory&cache=shared&uri=true"
 
-from httpx import AsyncClient
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.session import Base, get_db
 from app.main import app
 from app.core.config import settings
+
+
+def pytest_configure(config):
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+def pytest_sessionstart(session):
+    warnings.simplefilter("ignore", DeprecationWarning)
+
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -36,7 +48,8 @@ async def async_client(tmp_path):
 
     app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
     app.dependency_overrides.clear()

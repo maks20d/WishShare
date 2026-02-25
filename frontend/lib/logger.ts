@@ -1,6 +1,7 @@
 type LogPayload = Record<string, unknown> | Error | undefined;
 
-const shouldLog = () => process.env.NODE_ENV !== "production";
+const shouldLog = () =>
+  process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test";
 
 export const logger = {
   debug: (message: string, payload?: LogPayload) => {
@@ -23,6 +24,20 @@ export const logger = {
       console.error(message, { message: payload.message, stack: payload.stack });
       return;
     }
-    console.error(message, payload);
+    if (!payload || typeof payload !== "object") {
+      console.error(message);
+      return;
+    }
+
+    const compact = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => value !== undefined)
+    );
+
+    if (Object.keys(compact).length === 0) {
+      console.error(message);
+      return;
+    }
+
+    console.error(message, compact);
   }
 };

@@ -159,9 +159,20 @@ def _parse_session_days(raw: str | None) -> int:
 
 
 def _safe_next_path(next_path: str | None) -> str:
+    """Validate redirect path to prevent open redirect attacks.
+    
+    SECURITY: Blocks paths that could be interpreted as external URLs:
+    - Paths starting with // (protocol-relative URLs)
+    - Paths containing :// (absolute URLs with protocol)
+    - Paths like /.evil.com that browsers may interpret as domain names
+    """
     if not next_path:
         return "/dashboard"
     if not next_path.startswith("/") or next_path.startswith("//") or "://" in next_path:
+        return "/dashboard"
+    # SECURITY: Block paths that start with /. followed by domain-like patterns
+    # This prevents redirects like /.evil.com which browsers may interpret as external
+    if next_path.startswith("/.") and len(next_path) > 2 and "." in next_path[2:]:
         return "/dashboard"
     return next_path
 
@@ -254,7 +265,7 @@ async def register_user(
     
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={})
 
     user = User(
         email=payload.email,

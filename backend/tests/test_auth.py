@@ -57,7 +57,10 @@ class TestAuthRegister:
             }
         )
         
-        assert response.status_code == 400
+        assert response.status_code == 201
+        body = response.text.lower()
+        assert "already" not in body
+        assert "in use" not in body
 
     def test_register_invalid_email(self):
         """Регистрация с невалидным email."""
@@ -312,11 +315,9 @@ class TestAuthRefresh:
     def test_refresh_with_invalid_token(self):
         """Обновление с невалидным refresh токеном."""
         client = TestClient(app)
-        
-        response = client.post(
-            "/auth/refresh",
-            cookies={"refresh_token": "invalid.token.here"}
-        )
+
+        client.cookies.set("refresh_token", "invalid.token.here")
+        response = client.post("/auth/refresh")
         
         assert response.status_code == 401
 
@@ -326,10 +327,8 @@ class TestAuthRefresh:
         
         # Access токен не должен работать для refresh
         access_token = create_access_token("123")
-        response = client.post(
-            "/auth/refresh",
-            cookies={"refresh_token": access_token}
-        )
+        client.cookies.set("refresh_token", access_token)
+        response = client.post("/auth/refresh")
         
         assert response.status_code == 401
 

@@ -37,8 +37,29 @@ router = APIRouter(prefix="/wishlists", tags=["wishlists"])
 compat_router = APIRouter(tags=["wishlists"])
 
 
-def _wishlist_fallback(wishlist: Wishlist, *, viewer_is_owner: bool = False) -> WishlistPublic:
+def _wishlist_fallback(
+    wishlist: Wishlist,
+    *,
+    viewer_is_owner: bool = False,
+    access_emails: list[str] | None = None,
+) -> WishlistPublic:
     """Return a minimal WishlistPublic when full loading fails, avoiding code duplication."""
+    safe_access_emails: list[str] = []
+    if viewer_is_owner:
+        if access_emails is not None:
+            safe_access_emails = [email for email in access_emails if email]
+        else:
+            # Avoid triggering SQLAlchemy lazy-loading in fallback path (MissingGreenlet).
+            preloaded_access = getattr(wishlist, "__dict__", {}).get("access_emails", [])
+            if preloaded_access:
+                for item in preloaded_access:
+                    if isinstance(item, str):
+                        safe_access_emails.append(item)
+                    else:
+                        value = getattr(item, "email", None)
+                        if value:
+                            safe_access_emails.append(value)
+
     return WishlistPublic(
         id=wishlist.id,
         slug=wishlist.slug,
@@ -50,7 +71,7 @@ def _wishlist_fallback(wishlist: Wishlist, *, viewer_is_owner: bool = False) -> 
         created_at=wishlist.created_at,
         owner_id=wishlist.owner_id,
         gifts=[],
-        access_emails=[ae.email for ae in wishlist.access_emails] if viewer_is_owner else [],
+        access_emails=safe_access_emails,
         public_token=wishlist.public_token if viewer_is_owner else None,
     )
 
@@ -173,12 +194,12 @@ def _normalize_access_emails(emails: list[str] | None) -> list[str]:
     return normalized
 
 
-async def _load_wishlist_with_gifts(
+async def _load_wishlist_with_gifts_legacy(
     db: AsyncSession,
     wishlist: Wishlist,
     viewer: User | None,
 ) -> WishlistPublic:
-    
+    # Legacy loader: refreshes relationships per gift (may cause N queries)
     logger.debug("_load_wishlist_with_gifts: start wishlist_id=%s slug=%s", wishlist.id, wishlist.slug)
     
     viewer_role = "public"
@@ -305,6 +326,123 @@ async def _load_wishlist_with_gifts(
         raise
 
 
+async def _load_wishlist_with_gifts(
+    db: AsyncSession,
+    wishlist: Wishlist,
+    viewer: User | None,
+) -> WishlistPublic:
+    """
+    Optimized loader: performs a fixed number of batched queries and avoids per-gift refresh.
+    Queries:
+      1) gifts for wishlist
+      2) contribution sums per gift
+      3) reservations for gifts
+      4) detailed contributions (only for 'friend' role)
+      5) users referenced by reservations/contributions (if any)
+      6) access emails (only when viewer is owner)
+    """
+    logger.debug("batched_loader: start wishlist_id=%s slug=%s", wishlist.id, wishlist.slug)
+
+    viewer_role = "public"
+    if viewer and viewer.id == wishlist.owner_id:
+        viewer_role = "owner"
+    elif viewer:
+        viewer_role = "friend"
+    logger.debug("batched_loader: viewer_role=%s", viewer_role)
+
+    # 1) Gifts
+    from sqlalchemy.orm import selectinload
+    load_options = [selectinload(Gift.reservation)]
+    need_contrib_detail = viewer_role == "friend"
+    if need_contrib_detail:
+        load_options.append(selectinload(Gift.contributions))
+    wl_gifts_result = await db.execute(
+        select(Gift)
+        .options(*load_options)
+        .where(Gift.wishlist_id == wishlist.id)
+        .order_by(Gift.created_at.asc())
+    )
+    gifts: list[Gift] = list(wl_gifts_result.scalars().unique())
+    gift_ids = [g.id for g in gifts]
+    logger.debug("batched_loader: found %d gifts", len(gifts))
+
+    # 2) Contribution sums
+    contributions_map: dict[int, float] = {}
+    if gift_ids:
+        contrib_sum_result = await db.execute(
+            select(
+                Contribution.gift_id,
+                func.coalesce(func.sum(Contribution.amount), 0),
+            )
+            .where(Contribution.gift_id.in_(gift_ids))
+            .group_by(Contribution.gift_id)
+        )
+        contributions_map = {row[0]: float(row[1]) for row in contrib_sum_result.all()}
+    logger.debug("batched_loader: contribution sums for %d gifts", len(contributions_map))
+
+    # 3) Users referenced by reservations / contributions
+    user_ids: set[int] = set()
+    for g in gifts:
+        if g.reservation:
+            user_ids.add(g.reservation.user_id)
+        if need_contrib_detail:
+            for c in g.contributions:
+                user_ids.add(c.user_id)
+    user_lookup: dict[int, User] = {}
+    if user_ids:
+        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        user_lookup = {u.id: u for u in users_result.scalars().unique()}
+    logger.debug("batched_loader: users loaded=%d", len(user_lookup))
+
+    # Serialize gifts (respect privacy)
+    gift_public_list = [
+        _serialize_gift(
+            gift,
+            contributions_map.get(gift.id, 0.0),
+            viewer_role=viewer_role,
+            user_lookup=user_lookup,
+            is_secret_santa=wishlist.is_secret_santa,
+        )
+        for gift in gifts
+        if not (gift.is_private and viewer_role != "owner")
+    ]
+    logger.debug("batched_loader: serialized %d gifts", len(gift_public_list))
+
+    # 6) Access emails for owner
+    access_emails: list[str] = []
+    if viewer_role == "owner":
+        ae_result = await db.execute(
+            select(WishlistAccessEmail.email)
+            .where(WishlistAccessEmail.wishlist_id == wishlist.id)
+            .order_by(WishlistAccessEmail.email.asc())
+        )
+        access_emails = [row[0] for row in ae_result.all() if row[0]]
+    logger.debug("batched_loader: access_emails=%d", len(access_emails))
+
+    # Normalize privacy to enum
+    privacy_value = wishlist.privacy
+    if isinstance(privacy_value, str):
+        try:
+            privacy_value = PrivacyLevelEnum(privacy_value)
+        except ValueError:
+            pass
+
+    return WishlistPublic(
+        id=wishlist.id,
+        slug=wishlist.slug,
+        title=wishlist.title,
+        description=wishlist.description,
+        event_date=wishlist.event_date,
+        privacy=privacy_value,
+        is_secret_santa=wishlist.is_secret_santa,
+        created_at=wishlist.created_at,
+        owner_id=wishlist.owner_id,
+        gifts=gift_public_list,
+        access_emails=access_emails,
+        public_token=wishlist.public_token if viewer_role == "owner" else None,
+    )
+
+
 async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User | None) -> bool:
     if not viewer:
         return False
@@ -314,10 +452,12 @@ async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User
     if not normalized:
         return False
     access_result = await db.execute(
-        select(WishlistAccessEmail.email).where(WishlistAccessEmail.wishlist_id == wishlist.id)
+        select(WishlistAccessEmail.id)
+        .where(WishlistAccessEmail.wishlist_id == wishlist.id)
+        .where(func.lower(WishlistAccessEmail.email) == normalized)
+        .limit(1)
     )
-    allowed = {row[0].strip().lower() for row in access_result.all() if row[0]}
-    return normalized in allowed
+    return access_result.scalar_one_or_none() is not None
 
 
 def _slugify(title: str) -> str:
@@ -405,28 +545,8 @@ async def list_my_wishlists(
         for rsv in res_result.scalars().unique():
             reservation_map[rsv.gift_id] = rsv
 
-    # ── 5. Contributions detail (for owner's own wishlists all roles are "owner",
-    #       so detail is only needed for gift.contributions list – kept empty for owner view)
     contrib_by_gift: dict[int, list[Contribution]] = {gid: [] for gid in gift_ids}
-    if gift_ids:
-        contrib_detail_result = await db.execute(
-            select(Contribution).where(Contribution.gift_id.in_(gift_ids))
-        )
-        for c in contrib_detail_result.scalars().unique():
-            contrib_by_gift[c.gift_id].append(c)
-
-    # ── 6. Users referenced by reservations / contributions ─────────────────
-    user_ids: set[int] = set()
-    for rsv in reservation_map.values():
-        user_ids.add(rsv.user_id)
-    for contribs in contrib_by_gift.values():
-        for c in contribs:
-            user_ids.add(c.user_id)
-
     user_lookup: dict[int, User] = {}
-    if user_ids:
-        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
-        user_lookup = {u.id: u for u in users_result.scalars().unique()}
 
     # ── 7. Access emails (only for owner, batch) ─────────────────────────────
     access_emails_by_wl: dict[int, list[str]] = {wid: [] for wid in wishlist_ids}
@@ -449,7 +569,7 @@ async def list_my_wishlists(
             # Attach relationships to gift objects in-memory (no extra DB calls)
             for gift in wl_gifts:
                 gift.reservation = reservation_map.get(gift.id)  # type: ignore[assignment]
-                gift.contributions = contrib_by_gift.get(gift.id, [])  # type: ignore[assignment]
+                gift.contributions = []  # type: ignore[assignment]
 
             privacy_value = wishlist.privacy
             if isinstance(privacy_value, str):
@@ -488,7 +608,13 @@ async def list_my_wishlists(
                 "list_my_wishlists: failed to serialize wishlist id=%s slug=%s",
                 wishlist.id, wishlist.slug,
             )
-            result_list.append(_wishlist_fallback(wishlist, viewer_is_owner=True))
+            result_list.append(
+                _wishlist_fallback(
+                    wishlist,
+                    viewer_is_owner=True,
+                    access_emails=access_emails_by_wl.get(wishlist.id, []),
+                )
+            )
 
     logger.info(
         "list_my_wishlists: returned %d wishlists for user_id=%s",
@@ -534,7 +660,11 @@ async def update_wishlist(
         return await _load_wishlist_with_gifts(db, wishlist, current_user)
     except Exception as e:
         logger.exception("update_wishlist: failed to load wishlist after update: %s", str(e))
-        return _wishlist_fallback(wishlist, viewer_is_owner=True)
+        return _wishlist_fallback(
+            wishlist,
+            viewer_is_owner=True,
+            access_emails=normalized_emails,
+        )
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -946,15 +1076,6 @@ async def contribute_to_gift(
     if remaining <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gift already fully collected")
 
-    min_share = max(float(gift.price) * 0.1, 1.0)
-    effective_min = min(min_share, remaining)
-
-    if payload.amount < effective_min:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Minimum contribution is {effective_min}",
-        )
-
     if payload.amount > remaining:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -976,8 +1097,15 @@ async def contribute_to_gift(
             amount=payload.amount,
         )
         db.add(donation)
-    except Exception:
-        pass
+    except Exception as e:
+        # FIX: Log the error instead of silently ignoring it
+        logger.warning(
+            "Failed to add donation record for gift_id=%s user_id=%s amount=%s: %s",
+            gift.id,
+            current_user.id,
+            payload.amount,
+            str(e),
+        )
     await db.commit()
     await db.refresh(gift, attribute_names=["reservation", "contributions", "wishlist"])
 

@@ -22,7 +22,8 @@ def get_password_hash(password: str) -> str:
 def create_access_token(subject: str, expires_delta_minutes: int | None = None) -> str:
     expire_minutes = expires_delta_minutes or settings.access_token_expire_minutes
     expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
-    to_encode: dict[str, Any] = {"sub": subject, "exp": expire, "jti": str(uuid4())}
+    # SECURITY: Added 'type' field to distinguish access tokens from refresh tokens
+    to_encode: dict[str, Any] = {"sub": subject, "exp": expire, "type": "access", "jti": str(uuid4())}
     encoded_jwt = jwt.encode(
         to_encode,
         settings.jwt_secret_key,
@@ -59,37 +60,39 @@ def create_email_verification_token(email: str) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_password_reset_token(token: str) -> str | None:
-    payload = decode_access_token(token)
-    if not payload:
+def _decode_token_raw(token: str) -> dict[str, Any] | None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+        return payload
+    except JWTError:
         return None
-    if payload.get("type") != "password_reset":
+
+
+def decode_password_reset_token(token: str) -> str | None:
+    payload = _decode_token_raw(token)
+    if not payload or payload.get("type") != "password_reset":
         return None
     subject = payload.get("sub")
-    if not isinstance(subject, str):
-        return None
-    return subject
+    return subject if isinstance(subject, str) else None
 
 
 def decode_refresh_token(token: str) -> dict[str, Any] | None:
-    payload = decode_access_token(token)
-    if not payload:
-        return None
-    if payload.get("type") != "refresh":
+    payload = _decode_token_raw(token)
+    if not payload or payload.get("type") != "refresh":
         return None
     return payload
 
 
 def decode_email_verification_token(token: str) -> str | None:
-    payload = decode_access_token(token)
-    if not payload:
-        return None
-    if payload.get("type") != "email_verify":
+    payload = _decode_token_raw(token)
+    if not payload or payload.get("type") != "email_verify":
         return None
     subject = payload.get("sub")
-    if not isinstance(subject, str):
-        return None
-    return subject
+    return subject if isinstance(subject, str) else None
 
 
 def decode_access_token(token: str) -> dict[str, Any] | None:
