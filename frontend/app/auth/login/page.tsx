@@ -1,11 +1,10 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { api } from "../../../lib/api";
 import { type SessionDays, useAuthStore } from "../../../store/auth";
-import { LoginSkeleton } from "../../../components/Skeleton";
 import InstallCenter from "../../../components/dashboard/InstallCenter";
 
 function LoginContent() {
@@ -17,16 +16,24 @@ function LoginContent() {
   const [sessionDays, setSessionDays] = useState<SessionDays>(30);
   const [error, setError] = useState<string | null>(null);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
-  const searchParams = useSearchParams();
-  const nextParam = searchParams?.get("next");
-  const nextPath = nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
-  const verifiedParam = searchParams?.get("verified");
-  const verifiedMessage =
-    verifiedParam === "1"
-      ? "Email подтверждён. Теперь можно войти."
-      : verifiedParam === "0"
-        ? "Ссылка подтверждения недействительна или устарела."
-        : null;
+  const [nextPath] = useState(() => {
+    if (typeof window === "undefined") return "/dashboard";
+    const params = new URLSearchParams(window.location.search);
+    const nextParam = params.get("next");
+    return nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
+  });
+  const [verifiedMessage] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const verifiedParam = params.get("verified");
+    if (verifiedParam === "1") {
+      return "Email подтверждён. Теперь можно войти.";
+    }
+    if (verifiedParam === "0") {
+      return "Ссылка подтверждения недействительна или устарела.";
+    }
+    return null;
+  });
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -222,9 +229,5 @@ function LoginContent() {
 }
 
 export default function LoginPage() {
-  return (
-    <Suspense fallback={<LoginSkeleton />}>
-      <LoginContent />
-    </Suspense>
-  );
+  return <LoginContent />;
 }

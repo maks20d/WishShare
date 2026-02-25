@@ -1,11 +1,10 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { api } from "../../../lib/api";
 import { type SessionDays, useAuthStore } from "../../../store/auth";
-import { RegisterSkeleton } from "../../../components/Skeleton";
 
 function RegisterContent() {
   const router = useRouter();
@@ -17,9 +16,12 @@ function RegisterContent() {
   const [sessionDays, setSessionDays] = useState<SessionDays>(30);
   const [error, setError] = useState<string | null>(null);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
-  const searchParams = useSearchParams();
-  const nextParam = searchParams?.get("next");
-  const nextPath = nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
+  const [nextPath] = useState(() => {
+    if (typeof window === "undefined") return "/dashboard";
+    const params = new URLSearchParams(window.location.search);
+    const nextParam = params.get("next");
+    return nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
+  });
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -215,9 +217,5 @@ function RegisterContent() {
 }
 
 export default function RegisterPage() {
-  return (
-    <Suspense fallback={<RegisterSkeleton />}>
-      <RegisterContent />
-    </Suspense>
-  );
+  return <RegisterContent />;
 }
