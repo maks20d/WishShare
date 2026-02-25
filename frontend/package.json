@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/ensure-temp.js && cross-env TEMP=.tmp TMP=.tmp TMPDIR=.tmp next dev",
+    "dev": "node scripts/dev-runner.js",
     "build": "next build",
-    "start": "next start",
+    "start": "node .next/standalone/server.js",
+    "start:next": "next start",
     "lint": "eslint .",
     "test": "vitest run --coverage",
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.39.0",
     "@tanstack/react-query": "^5.56.2",
     "next": "^16.1.6",
     "qrcode.react": "^4.2.0",
@@ -42,3 +44,4 @@
     "vitest": "^4.0.18"
   }
 }
+
