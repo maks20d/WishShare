@@ -1,6 +1,7 @@
 import pytest
 import os
 import warnings
+from sqlalchemy import create_engine
 
 # Set environment variables BEFORE importing app modules
 os.environ["RATE_LIMIT_ENABLED"] = "false"
@@ -54,6 +55,28 @@ async def async_client(tmp_path):
 
     app.dependency_overrides.clear()
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def sync_db_override(tmp_path):
+    db_path = tmp_path / "sync-test.db"
+    from app.models import models as models_module
+    _ = models_module
+    sync_engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    async_session = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    async def override_get_db():
+        async with async_session() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.clear()
+    engine.sync_engine.dispose()
 
 
 @pytest.fixture
