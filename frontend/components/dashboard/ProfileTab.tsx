@@ -6,6 +6,47 @@ import { api } from "../../lib/api";
 import { User, useAuthStore } from "../../store/auth";
 import { useToast } from "../Toast";
 
+function PasswordInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={showPassword ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+      />
+      <button
+        type="button"
+        onClick={() => setShowPassword(!showPassword)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+        tabIndex={-1}
+      >
+        {showPassword ? (
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+          </svg>
+        ) : (
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
+
 export default function ProfileTab() {
   const { user, setUser } = useAuthStore();
   const { toast } = useToast();
@@ -90,14 +131,13 @@ export default function ProfileTab() {
         </div>
         <form onSubmit={handlePasswordChange} className="space-y-3">
           {[
-            { label: "Текущий пароль", value: passwordOld, setter: setPasswordOld },
-            { label: "Новый пароль (мин. 8 символов)", value: passwordNew, setter: setPasswordNew },
-            { label: "Повторите пароль", value: passwordConfirm, setter: setPasswordConfirm },
-          ].map(({ label, value, setter }) => (
+            { label: "Текущий пароль", value: passwordOld, setter: setPasswordOld, placeholder: "Введите текущий пароль" },
+            { label: "Новый пароль (мин. 8 символов)", value: passwordNew, setter: setPasswordNew, placeholder: "Введите новый пароль" },
+            { label: "Повторите пароль", value: passwordConfirm, setter: setPasswordConfirm, placeholder: "Повторите новый пароль" },
+          ].map(({ label, value, setter, placeholder }) => (
             <div key={label}>
               <label className="text-sm text-[var(--text-secondary)]">{label}</label>
-              <input type="password" value={value} onChange={(e) => setter(e.target.value)}
-                className="mt-1 w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              <PasswordInput value={value} onChange={(e) => setter(e.target.value)} placeholder={placeholder} />
             </div>
           ))}
           <button type="submit" disabled={passwordSaving} className="btn-primary">
