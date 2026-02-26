@@ -184,7 +184,7 @@ function Sync-AppCode {
 
   Push-Location $Root
   try {
-    $status = (& git status --porcelain).Trim()
+    $status = (& git status --porcelain 2>$null).Trim()
     if (-not [string]::IsNullOrWhiteSpace($status)) {
       Write-Warn "Working tree has local changes. Skipping auto-update."
       return
@@ -220,12 +220,33 @@ function Sync-AppCode {
     $script:AppUpdated = $true
     $script:ForceSync = $true
     Write-Ok "App code updated from origin/main."
+  } catch {
+    Write-Warn "Auto-update check skipped: $($_.Exception.Message)"
+    return
   } finally {
     Pop-Location
   }
 }
 
 function Ensure-BackendMigrations {
+  $dsn = $env:POSTGRES_DSN
+  if ([string]::IsNullOrWhiteSpace($dsn)) {
+    $envPath = Join-Path $Root ".env"
+    if (Test-Path -LiteralPath $envPath) {
+      $line = Get-Content -Path $envPath | Where-Object { $_ -match '^\s*POSTGRES_DSN\s*=' } | Select-Object -First 1
+      if ($line) {
+        $dsn = (($line -split "=", 2)[1]).Trim().Trim("'`"")
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($dsn)) {
+    $dsn = "sqlite+aiosqlite:///./wishshare.db"
+  }
+  if ($dsn -match '^\s*sqlite(\+[^:]+)?:') {
+    Write-Info "SQLite detected. Skipping Alembic migrations in app mode."
+    return
+  }
+
   $alembicIni = Join-Path $BackendDir "alembic.ini"
   if (-not (Test-Path -LiteralPath $alembicIni)) {
     Write-Warn "alembic.ini not found. Skipping migrations."
@@ -235,9 +256,32 @@ function Ensure-BackendMigrations {
   Write-Info "Applying backend migrations..."
   Push-Location $BackendDir
   try {
-    & $VenvPy -m alembic -c $alembicIni upgrade head
-    if ($LASTEXITCODE -ne 0) {
-      throw "Backend migrations failed."
+    $upgradeCmd = "`"$VenvPy`" -m alembic -c `"$alembicIni`" upgrade head"
+    $output = cmd /c "$upgradeCmd 2>&1"
+    $exitCode = $LASTEXITCODE
+
+    if ($exitCode -ne 0) {
+      $joined = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+      $isDuplicatePublicToken = $joined -match "duplicate column name:\s*public_token"
+
+      if ($isDuplicatePublicToken) {
+        Write-Warn "Migration history is behind schema (public_token already exists). Stamping head..."
+        Write-Warn "WARNING: This assumes the database schema is already up to date."
+        Write-Warn "         If migrations were partially applied, manual intervention may be required."
+        $stampCmd = "`"$VenvPy`" -m alembic -c `"$alembicIni`" stamp head"
+        $stampOutput = cmd /c "$stampCmd 2>&1"
+        if ($LASTEXITCODE -ne 0) {
+          if ($stampOutput) {
+            Write-Host (($stampOutput | ForEach-Object { $_.ToString() }) -join "`n")
+          }
+          throw "Backend migrations failed while stamping head."
+        }
+      } else {
+        if (-not [string]::IsNullOrWhiteSpace($joined)) {
+          Write-Host $joined
+        }
+        throw "Backend migrations failed."
+      }
     }
   } finally {
     Pop-Location
@@ -305,6 +349,33 @@ function Start-Backend {
   Start-Process -FilePath "cmd.exe" -ArgumentList "/k", $cmd | Out-Null
 }
 
+function Start-BackendProcessWithDsn(
+  [string]$BackendOut,
+  [string]$BackendErr,
+  [string]$DsnOverride = ""
+) {
+  if ([string]::IsNullOrWhiteSpace($DsnOverride)) {
+    return Start-Process `
+      -FilePath $VenvPy `
+      -ArgumentList "entrypoint.py" `
+      -WorkingDirectory $BackendDir `
+      -RedirectStandardOutput $BackendOut `
+      -RedirectStandardError $BackendErr `
+      -WindowStyle Hidden `
+      -PassThru
+  }
+
+  $cmd = "set `"POSTGRES_DSN=$DsnOverride`" && `"$VenvPy`" entrypoint.py"
+  return Start-Process `
+    -FilePath "cmd.exe" `
+    -ArgumentList @("/c", $cmd) `
+    -WorkingDirectory $BackendDir `
+    -RedirectStandardOutput $BackendOut `
+    -RedirectStandardError $BackendErr `
+    -WindowStyle Hidden `
+    -PassThru
+}
+
 function Start-BackendService {
   Ensure-BackendDeps
 
@@ -330,19 +401,26 @@ function Start-BackendService {
   $backendOut = Join-Path $logDir "backend.out.log"
   $backendErr = Join-Path $logDir "backend.err.log"
 
+  $dsnOverride = ""
   Write-Info "Starting backend service..."
-  $process = Start-Process `
-    -FilePath $VenvPy `
-    -ArgumentList "entrypoint.py" `
-    -WorkingDirectory $BackendDir `
-    -RedirectStandardOutput $backendOut `
-    -RedirectStandardError $backendErr `
-    -WindowStyle Hidden `
-    -PassThru
+  $process = Start-BackendProcessWithDsn -BackendOut $backendOut -BackendErr $backendErr -DsnOverride $dsnOverride
 
   if (-not (Wait-ForCondition -Condition { Test-BackendHealthy } -Name "backend" -TimeoutSec 45)) {
+    $backendLog = if (Test-Path -LiteralPath $backendErr) { (Get-Content -Path $backendErr -Raw) } else { "" }
     Stop-ServiceByPid -ProcessId $process.Id -Name "backend"
-    throw "Backend failed to start. Check logs in .logs/backend.err.log"
+
+    if ($backendLog -match "disk I/O error") {
+      $dsnOverride = "sqlite+aiosqlite:///./wishshare_runtime.db"
+      Write-Warn "SQLite disk I/O error detected. Retrying backend with fallback DB: wishshare_runtime.db"
+      $process = Start-BackendProcessWithDsn -BackendOut $backendOut -BackendErr $backendErr -DsnOverride $dsnOverride
+
+      if (-not (Wait-ForCondition -Condition { Test-BackendHealthy } -Name "backend (fallback db)" -TimeoutSec 45)) {
+        Stop-ServiceByPid -ProcessId $process.Id -Name "backend"
+        throw "Backend failed to start even with fallback DB. Check logs in .logs/backend.err.log"
+      }
+    } else {
+      throw "Backend failed to start. Check logs in .logs/backend.err.log"
+    }
   }
 
   if (-not (Wait-ForCondition -Condition { Test-BackendDbHealthy } -Name "backend db health" -TimeoutSec 30)) {
@@ -402,15 +480,16 @@ function Start-FrontendService {
   $frontendOut = Join-Path $logDir "frontend.out.log"
   $frontendErr = Join-Path $logDir "frontend.err.log"
   $nodeCmd = Get-Command node -ErrorAction Stop
-  $nextCli = Join-Path $FrontendDir "node_modules\next\dist\bin\next"
-  if (-not (Test-Path -LiteralPath $nextCli)) {
-    throw "Next.js CLI not found: $nextCli"
+  $standaloneServer = Join-Path $FrontendDir ".next\standalone\server.js"
+  if (-not (Test-Path -LiteralPath $standaloneServer)) {
+    throw "Standalone frontend server not found: $standaloneServer"
   }
+  $serverEntrypoint = ".next/standalone/server.js"
 
   Write-Info "Starting frontend service..."
   $process = Start-Process `
     -FilePath $nodeCmd.Source `
-    -ArgumentList @($nextCli, "start", "--port", "3000") `
+    -ArgumentList @($serverEntrypoint) `
     -WorkingDirectory $FrontendDir `
     -RedirectStandardOutput $frontendOut `
     -RedirectStandardError $frontendErr `
@@ -557,10 +636,12 @@ function Create-EnvFile {
 
 function Get-AppModeBrowserPath {
   $candidates = @(
+    (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
+    (Join-Path $env:LOCALAPPDATA "Microsoft\Edge\Application\msedge.exe"),
     (Join-Path $env:ProgramFiles "Google\Chrome\Application\chrome.exe"),
     (Join-Path ${env:ProgramFiles(x86)} "Google\Chrome\Application\chrome.exe"),
-    (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe"),
-    (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe")
+    (Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe")
   )
 
   foreach ($candidate in $candidates) {
@@ -584,15 +665,26 @@ function Open-AppWindow {
   $browserPath = Get-AppModeBrowserPath
 
   if ($browserPath) {
-    $profileDir = Join-Path $Root ".app-profile"
+    $profileDir = Join-Path $env:LOCALAPPDATA "WishShare\browser-profile"
     if (-not (Test-Path -LiteralPath $profileDir)) {
       New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
     }
 
-    return Start-Process `
-      -FilePath $browserPath `
-      -ArgumentList @("--app=$url", "--new-window", "--user-data-dir=$profileDir") `
-      -PassThru
+    try {
+      return Start-Process `
+        -FilePath $browserPath `
+        -ArgumentList @(
+          "--app=$url",
+          "--new-window",
+          "--user-data-dir=$profileDir",
+          "--disable-extensions",
+          "--no-first-run",
+          "--no-default-browser-check"
+        ) `
+        -PassThru
+    } catch {
+      Write-Warn "Failed to launch app-window browser ($browserPath): $($_.Exception.Message)"
+    }
   }
 
   Write-Warn "Chrome/Edge not found. Opening default browser without lifecycle tracking."
