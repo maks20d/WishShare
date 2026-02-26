@@ -18,21 +18,21 @@ from app.realtime.manager import manager
 
 logger = logging.getLogger("wishshare.wishlists")
 
+wishlist_cache = None
+wishlist_metrics = None
+send_gift_reserved_email = None
+send_gift_unreserved_email = None
+send_contribution_email = None
+
 try:
     from app.core.wishlist_cache import wishlist_cache
-except Exception:
-    wishlist_cache = None
-    try:
-        from app.core.cache_null import NullWishlistCache
-        wishlist_cache = NullWishlistCache()
-    except Exception:
-        wishlist_cache = None
+except Exception as e:
+    logger.warning("wishlist_cache import failed: %s", e)
 
 try:
     from app.core.wishlist_metrics import wishlist_metrics
-except Exception:
-    logger.warning("wishlist_metrics import failed, using disabled metrics")
-    wishlist_metrics = None
+except Exception as e:
+    logger.warning("wishlist_metrics import failed: %s", e)
 
 try:
     from app.core.mailer import (
@@ -40,11 +40,8 @@ try:
         send_gift_unreserved_email,
         send_contribution_email,
     )
-except Exception:
-    logger.warning("mailer import failed, emails disabled")
-    send_gift_reserved_email = None
-    send_gift_unreserved_email = None
-    send_contribution_email = None
+except Exception as e:
+    logger.warning("mailer import failed: %s", e)
 
 from app.schemas.wishlist import (
     ContributionCreate,
