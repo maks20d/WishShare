@@ -335,6 +335,18 @@ app.include_router(ws.router)
 app.include_router(og.router)
 
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    """Root endpoint - returns API info."""
+    return {"app": "WishShare API", "version": "0.1.0", "status": "running"}
+
+
+@app.head("/")
+async def root_head() -> dict[str, str]:
+    """HEAD request for health checks."""
+    return {"status": "ok"}
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
