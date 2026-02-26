@@ -67,7 +67,8 @@ describe("api client", () => {
     } catch (error) {
       const err = error as ApiError;
       expect(err.code).toBe("NETWORK_ERROR");
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      // MAX_RETRIES=3 means 1 initial + 3 retries = 4 total attempts
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     }
   });
 });
