@@ -321,6 +321,10 @@ async def login_user(
         client_host,
         request.headers.get("user-agent"),
     )
+    
+    # DEBUG: Log incoming payload
+    logger.debug("Auth login payload: email=%s, password_length=%d", payload.email, len(payload.password))
+    
     try:
         result = await db.execute(select(User).where(User.email == payload.email))
         user = result.scalar_one_or_none()
@@ -343,6 +347,10 @@ async def login_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь не найден. Зарегистрируйтесь.",
         )
+    
+    # DEBUG: Log user found
+    logger.debug("Auth login user found: id=%s, has_password=%s", user.id, bool(user.hashed_password))
+    
     # Validate stored password presence to avoid internal server errors
     if not isinstance(user.hashed_password, str) or not user.hashed_password:
         logger.warning("Auth login: invalid stored password for user_id=%s", user.id)
@@ -353,11 +361,13 @@ async def login_user(
         )
     try:
         password_ok = verify_password(payload.password, user.hashed_password)
-    except Exception:
+        logger.debug("Auth login verify result: %s", password_ok)
+    except Exception as e:
         logger.exception(
-            "Auth login verify failed id=%s user_id=%s",
+            "Auth login verify failed id=%s user_id=%s: %s",
             request_id,
             user.id,
+            e,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
