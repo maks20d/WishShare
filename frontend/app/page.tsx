@@ -1,9 +1,59 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import InstallCenter from "../components/dashboard/InstallCenter";
 
+type HeroVariant = "A" | "B";
+
+const HERO_EXPERIMENT = "home-hero-cta";
+
+const sendExperimentEvent = (variant: HeroVariant, event: "exposure" | "conversion") => {
+  fetch("/api/metrics/experiments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      experiment: HERO_EXPERIMENT,
+      variant,
+      event
+    }),
+    keepalive: true
+  }).catch(() => undefined);
+};
+
 export default function HomePage() {
+  const [variant] = useState<HeroVariant>(() => {
+    if (typeof window === "undefined") return "A";
+    const key = "ab_home_hero";
+    const stored = window.localStorage.getItem(key);
+    const assigned = stored === "B" ? "B" : stored === "A" ? "A" : Math.random() < 0.5 ? "A" : "B";
+    if (!stored) {
+      window.localStorage.setItem(key, assigned);
+    }
+    return assigned;
+  });
+
+  useEffect(() => {
+    sendExperimentEvent(variant, "exposure");
+  }, [variant]);
+
+  const heroCopy = useMemo(() => {
+    if (variant === "B") {
+      return {
+        headline: "WishShare помогает собрать подарок без лишних чатов и спойлеров",
+        subline:
+          "Собирайте подарки вместе, отслеживайте прогресс и сохраняйте интригу для владельца списка.",
+        primaryCta: "Начать прямо сейчас"
+      };
+    }
+    return {
+      headline: "WishShare превращает подарки в сюрпризы, а сборы — в командную игру",
+      subline:
+        "Создавайте списки желаний, отправляйте приватную ссылку друзьям и следите за прогрессом. Владелец видит только статус и сумму, имена остаются скрыты.",
+      primaryCta: "Создать вишлист"
+    };
+  }, [variant]);
+
   return (
     <main className="min-h-screen px-4 py-10 grid-mesh text-slate-50">
       <div className="max-w-6xl mx-auto space-y-10">
@@ -14,15 +64,18 @@ export default function HomePage() {
                 Социальный вишлист
               </p>
               <h1 className="text-4xl md:text-5xl font-semibold leading-tight">
-                WishShare превращает подарки в сюрпризы, а сборы — в командную игру
+                {heroCopy.headline}
               </h1>
               <p className="text-sm md:text-base text-[var(--text-secondary)] max-w-3xl">
-                Создавайте списки желаний, отправляйте приватную ссылку друзьям и следите
-                за прогрессом. Владелец видит только статус и сумму, имена остаются скрыты.
+                {heroCopy.subline}
               </p>
               <div className="flex flex-wrap gap-3">
-                <Link href="/auth/register" className="btn-primary">
-                  Создать вишлист
+                <Link
+                  href="/auth/register"
+                  className="btn-primary"
+                  onClick={() => sendExperimentEvent(variant, "conversion")}
+                >
+                  {heroCopy.primaryCta}
                 </Link>
                 <Link href="/auth/login" className="btn-ghost">
                   Войти

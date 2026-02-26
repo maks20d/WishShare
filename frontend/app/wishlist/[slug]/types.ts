@@ -53,4 +53,4 @@ export type OgPreviewResponse = {
 };
 
 // Re-export from auth store for convenience
-export type { User } from "../../store/auth";
+export type { User } from "../../../store/auth";

@@ -28,14 +28,14 @@ async function cleanupDevelopmentServiceWorkers(): Promise<void> {
   }
 }
 
-export function registerServiceWorker(): void {
+export function registerServiceWorker(): () => void {
   if (typeof window === "undefined") {
-    return;
+    return () => {};
   }
 
   if (!("serviceWorker" in navigator)) {
     console.log("[PWA] Service Worker not supported");
-    return;
+    return () => {};
   }
 
   // In development mode, service worker caching causes stale Turbopack chunks
@@ -43,10 +43,12 @@ export function registerServiceWorker(): void {
   if (isDevelopmentRuntime()) {
     void cleanupDevelopmentServiceWorkers();
     console.log("[PWA] Service Worker disabled in development mode");
-    return;
+    return () => {};
   }
 
   let reloading = false;
+  // FIX: Store interval ID for cleanup to prevent memory leak
+  let updateIntervalId: ReturnType<typeof setInterval> | null = null;
 
   const doRegister = async () => {
     try {
@@ -77,7 +79,8 @@ export function registerServiceWorker(): void {
       });
 
       // Периодическая проверка обновлений (каждые 60 минут)
-      setInterval(() => {
+      // FIX: Store interval ID for cleanup to prevent memory leak
+      updateIntervalId = setInterval(() => {
         registration.update().catch((err) => {
           console.error('[PWA] Failed to check for updates:', err);
         });
@@ -109,6 +112,14 @@ export function registerServiceWorker(): void {
     console.log('[PWA] Controller changed, reloading...');
     window.location.reload();
   });
+
+  // FIX: Return cleanup function to clear interval and prevent memory leak
+  return () => {
+    if (updateIntervalId !== null) {
+      clearInterval(updateIntervalId);
+      updateIntervalId = null;
+    }
+  };
 }
 
 /**

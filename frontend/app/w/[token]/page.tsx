@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Image from "next/image";
 import { api } from "../../../lib/api";
+import { encodePathParam, normalizeRouteParam } from "../../../lib/routeParams";
 
 type Gift = {
   id: number;
@@ -35,8 +36,9 @@ type Wishlist = {
 };
 
 export default function PublicWishlistPage() {
-  const params = useParams<{ token: string }>();
-  const token = params.token;
+  const params = useParams<{ token?: string | string[] }>();
+  const token = normalizeRouteParam(params.token);
+  const encodedToken = encodePathParam(token);
   const [data, setData] = useState<Wishlist | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export default function PublicWishlistPage() {
     let active = true;
     const fetchData = async () => {
       try {
-        const res = await api.get<Wishlist>(`/wishlists/token/${token}`);
+        const res = await api.get<Wishlist>(`/wishlists/token/${encodedToken}`);
         if (active) setData(res);
       } catch (e) {
         if (active) {
@@ -55,30 +57,34 @@ export default function PublicWishlistPage() {
         if (active) setLoading(false);
       }
     };
-    if (token) fetchData();
+    if (token && encodedToken) fetchData();
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, encodedToken]);
 
   const title = useMemo(() => data?.title ?? "Вишлист", [data]);
 
   if (loading) {
-    return <div className="container mx-auto p-6">Загрузка…</div>;
+    return <div className="max-w-6xl mx-auto p-6">Загрузка…</div>;
+  }
+  if (!token) {
+    return <div className="max-w-6xl mx-auto p-6 text-red-600">Некорректная ссылка</div>;
   }
   if (error) {
-    return <div className="container mx-auto p-6 text-red-600">{error}</div>;
+    return <div className="max-w-6xl mx-auto p-6 text-red-600">{error}</div>;
   }
   if (!data) {
-    return <div className="container mx-auto p-6">Вишлист не найден</div>;
+    return <div className="max-w-6xl mx-auto p-6">Вишлист не найден</div>;
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-bold">{title}</h1>
+    <main className="min-h-screen px-4 py-8 md:py-10 grid-mesh">
+      <div className="max-w-6xl mx-auto space-y-6">
+      <header className="surface-panel-strong p-5 md:p-7 space-y-2">
+        <h1 className="text-2xl md:text-3xl font-bold">{title}</h1>
         {data.description ? (
-          <p className="text-[var(--text-secondary)]">{data.description}</p>
+          <p className="text-sm md:text-base text-[var(--text-secondary)]">{data.description}</p>
         ) : null}
       </header>
 
@@ -126,6 +132,7 @@ export default function PublicWishlistPage() {
           );
         })}
       </section>
-    </div>
+      </div>
+    </main>
   );
 }

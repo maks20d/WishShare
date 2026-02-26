@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
-import { api } from "../../../lib/api";
+import { api, ApiError } from "../../../lib/api";
 import { connectWishlistWs } from "../../../lib/ws";
 import { useAuthStore } from "../../../store/auth";
 import EditGiftModal from "../../../components/EditGiftModal";
@@ -15,6 +15,7 @@ import { WishlistSkeleton } from "../../../components/Skeleton";
 import AddGiftForm from "../../../components/wishlist/AddGiftForm";
 import GiftCard from "../../../components/wishlist/GiftCard";
 import ContributionModal from "../../../components/wishlist/ContributionModal";
+import { encodePathParam, normalizeRouteParam } from "../../../lib/routeParams";
 import { Gift, Wishlist } from "./types";
 
 function giftsWord(count: number): string {
@@ -27,7 +28,9 @@ function giftsWord(count: number): string {
 }
 
 export default function WishlistPage() {
-  const { slug } = useParams<{ slug: string }>();
+  const { slug: rawSlug } = useParams<{ slug?: string | string[] }>();
+  const slug = normalizeRouteParam(rawSlug);
+  const encodedSlug = encodePathParam(slug);
   const { user } = useAuthStore();
   const { toast } = useToast();
 
@@ -36,9 +39,10 @@ export default function WishlistPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const { data: wishlist, isLoading, isError, refetch } = useQuery<Wishlist>({
+  const { data: wishlist, isLoading, isError, error, refetch } = useQuery<Wishlist>({
     queryKey: ["wishlist", slug],
-    queryFn: () => api.get<Wishlist>(`/wishlists/${slug}`),
+    queryFn: () => api.get<Wishlist>(`/wishlists/${encodedSlug}`),
+    enabled: Boolean(slug && encodedSlug),
     retry: 1,
   });
 
@@ -86,12 +90,50 @@ export default function WishlistPage() {
     );
   }
 
+  if (!slug) {
+    return (
+      <main className="min-h-screen px-4 py-10 grid-mesh">
+        <div className="max-w-3xl mx-auto surface-panel-strong p-8 text-center space-y-4">
+          <h1 className="text-2xl font-bold">Некорректная ссылка</h1>
+          <p className="text-sm text-[var(--text-secondary)]">Проверьте адрес и попробуйте открыть вишлист снова.</p>
+          <Link href="/" className="btn-primary inline-block">На главную</Link>
+        </div>
+      </main>
+    );
+  }
+
+  const apiError = error as ApiError | undefined;
+  const isAuthError = apiError?.code === "UNAUTHORIZED" || apiError?.code === "FORBIDDEN";
+
+  if (isAuthError) {
+    return (
+      <main className="min-h-screen px-4 py-10 grid-mesh">
+        <div className="max-w-3xl mx-auto surface-panel-strong p-8 text-center space-y-4">
+          <h1 className="text-2xl font-bold">Доступ ограничен</h1>
+          <p className="text-sm text-[var(--text-secondary)]">
+            Для просмотра этого вишлиста нужно войти или получить доступ от владельца.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <Link href={`/auth/login?next=${encodeURIComponent(`/wishlist/${encodedSlug}`)}`} className="btn-primary">
+              Войти
+            </Link>
+            <Link href={`/auth/register?next=${encodeURIComponent(`/wishlist/${encodedSlug}`)}`} className="btn-ghost">
+              Зарегистрироваться
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   if (isError || !wishlist) {
     return (
       <main className="min-h-screen px-4 py-10 grid-mesh">
         <div className="max-w-3xl mx-auto surface-panel-strong p-8 text-center space-y-4">
           <h1 className="text-2xl font-bold">Вишлист не найден</h1>
-          <p className="text-sm text-[var(--text-secondary)]">Ссылка недействительна или вишлист удалён.</p>
+          <p className="text-sm text-[var(--text-secondary)]">
+            {apiError?.message || "Ссылка недействительна или вишлист удалён."}
+          </p>
           <Link href="/" className="btn-primary inline-block">На главную</Link>
         </div>
       </main>
@@ -127,12 +169,12 @@ export default function WishlistPage() {
               </div>
             </div>
             {isOwner && (
-              <div className="flex flex-col items-end gap-3">
-                <button onClick={handleCopyLink} className="btn-ghost text-sm md:text-base">
+              <div className="flex flex-col md:items-end gap-3">
+                <button onClick={handleCopyLink} className="btn-ghost text-sm md:text-base w-full md:w-auto">
                   {copied ? "Ссылка скопирована" : "Поделиться ссылкой"}
                 </button>
                 {wishlist.public_token ? (
-                  <div className="p-2 bg-white rounded-lg">
+                  <div className="hidden md:block p-2 bg-white rounded-lg">
                     <QRCodeSVG
                       value={`${typeof window !== "undefined" ? window.location.origin : ""}/w/${wishlist.public_token}`}
                       size={140}
@@ -151,11 +193,11 @@ export default function WishlistPage() {
         {!isAuthenticated && (
           <section className="surface-panel border-emerald-400/30 bg-emerald-400/8 px-4 py-3 text-sm text-emerald-100">
             Чтобы зарезервировать подарок или внести вклад,{" "}
-            <Link href={`/auth/login?next=${encodeURIComponent(`/wishlist/${slug}`)}`} className="underline font-semibold">
+            <Link href={`/auth/login?next=${encodeURIComponent(`/wishlist/${encodedSlug}`)}`} className="underline font-semibold">
               войдите
             </Link>{" "}
             или{" "}
-            <Link href={`/auth/register?next=${encodeURIComponent(`/wishlist/${slug}`)}`} className="underline font-semibold">
+            <Link href={`/auth/register?next=${encodeURIComponent(`/wishlist/${encodedSlug}`)}`} className="underline font-semibold">
               зарегистрируйтесь
             </Link>.
           </section>

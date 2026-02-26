@@ -139,9 +139,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         else if (res.status === 403) error.code = "FORBIDDEN";
         else if (res.status >= 500) error.code = "SERVER_ERROR";
 
-        // Don't log 401 as error - it's expected for unauthenticated users
+        // 401 is expected for unauthenticated users on protected pages.
         if (res.status === 401) {
-          // Silently handle - guests viewing pages is normal
+          // Intentionally silent.
+        } else if (res.status === 404 && method === "GET") {
+          logger.warn("API request returned 404", { url, method, status: res.status });
         } else {
           logger.error("API request failed", {
             url,
@@ -187,14 +189,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       error.method = method;
       error.requestBody = options.body ? safeJsonParse(options.body) : undefined;
 
-      logger.error("API request failed", {
+      const logPayload = {
         url,
         method,
         code: error.code,
         requestBody: error.requestBody,
         error: error.message,
         stack: error.stack
-      });
+      };
+      if (error.code === "NETWORK_ERROR") {
+        logger.warn("API request failed", logPayload);
+      } else {
+        logger.error("API request failed", logPayload);
+      }
 
       if (attempt < MAX_RETRIES) {
         lastError = error;

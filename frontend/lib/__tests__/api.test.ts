@@ -47,7 +47,7 @@ describe("api client", () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => jsonResponse(401, { detail: "Unauthorized" }))
-      .mockImplementationOnce(() => new Response(null, { status: 204 }))
+      .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })))
       .mockImplementationOnce(() => jsonResponse(200, { ok: true }));
 
     const result = await api.get<{ ok: boolean }>("/auth/me");

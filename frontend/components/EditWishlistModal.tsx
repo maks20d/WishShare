@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../lib/api";
 
 type Wishlist = {
@@ -26,6 +26,71 @@ function toInputDate(value?: string | null): string {
   return value.length >= 10 ? value.slice(0, 10) : value;
 }
 
+/**
+ * Focus trap hook for accessibility
+ * FIX: Added focus trap to prevent focus from escaping modal dialog
+ */
+function useFocusTrap(isOpen: boolean, onClose: () => void) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Store the previously focused element
+    previousFocusRef.current = document.activeElement as HTMLElement;
+
+    // Focus the first focusable element in the modal
+    const focusableElements = containerRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusableElements && focusableElements.length > 0) {
+      focusableElements[0].focus();
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+
+      if (e.key !== "Tab") return;
+
+      const focusables = containerRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusables || focusables.length === 0) return;
+
+      const firstFocusable = focusables[0];
+      const lastFocusable = focusables[focusables.length - 1];
+
+      if (e.shiftKey) {
+        // Shift + Tab
+        if (document.activeElement === firstFocusable) {
+          e.preventDefault();
+          lastFocusable.focus();
+        }
+      } else {
+        // Tab
+        if (document.activeElement === lastFocusable) {
+          e.preventDefault();
+          firstFocusable.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      // Restore focus when modal closes
+      previousFocusRef.current?.focus();
+    };
+  }, [isOpen, onClose]);
+
+  return containerRef;
+}
+
 export default function EditWishlistModal({
   wishlist,
   isOpen,
@@ -45,6 +110,12 @@ export default function EditWishlistModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  const modalRef = useFocusTrap(isOpen, handleClose);
 
   const parseEmails = (value: string): string[] =>
     value
@@ -90,10 +161,16 @@ export default function EditWishlistModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="surface-panel-strong w-full max-w-lg p-6 md:p-7 space-y-5">
+      <div
+        ref={modalRef}
+        className="surface-panel-strong w-full max-w-lg p-6 md:p-7 space-y-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-wishlist-modal-title"
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-semibold">Редактирование вишлиста</h2>
+            <h2 id="edit-wishlist-modal-title" className="text-2xl font-semibold">Редактирование вишлиста</h2>
             <p className="text-sm text-[var(--text-secondary)] mt-1">
               Настройте описание, доступ и дату события.
             </p>

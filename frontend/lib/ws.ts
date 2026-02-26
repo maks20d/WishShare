@@ -1,3 +1,5 @@
+import { normalizeRouteParam } from "./routeParams";
+
 function isLocalDevHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
@@ -60,25 +62,6 @@ function resolveWsBase(): string {
   return "ws://localhost:8000/ws";
 }
 
-function normalizeSlug(value: string): string {
-  let current = value;
-  for (let i = 0; i < 2; i += 1) {
-    if (!current.includes("%")) {
-      break;
-    }
-    try {
-      const decoded = decodeURIComponent(current);
-      if (decoded === current) {
-        break;
-      }
-      current = decoded;
-    } catch {
-      break;
-    }
-  }
-  return current;
-}
-
 const WS_BASE = resolveWsBase();
 import { logger } from "./logger";
 if (process.env.NODE_ENV !== "production") {
@@ -106,7 +89,11 @@ export function connectWishlistWs(
       return;
     }
 
-    const normalizedSlug = normalizeSlug(slug);
+    const normalizedSlug = normalizeRouteParam(slug);
+    if (!normalizedSlug) {
+      return;
+    }
+
     const socket = new WebSocket(`${WS_BASE}/${encodeURIComponent(normalizedSlug)}`);
     currentSocket = socket;
 

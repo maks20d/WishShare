@@ -79,7 +79,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               __html: `
                 (function () {
                   try {
-                    if (location.hostname !== "localhost") return;
+                    if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1" && location.hostname !== "::1") return;
                     if (!("serviceWorker" in navigator)) return;
                     navigator.serviceWorker.getRegistrations().then(function (regs) {
                       return Promise.all(regs.map(function (r) { return r.unregister(); }));

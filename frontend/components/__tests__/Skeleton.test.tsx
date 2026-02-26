@@ -327,12 +327,12 @@ describe("Skeleton", () => {
   describe("Snapshot tests", () => {
     it("base Skeleton matches snapshot", () => {
       const { container } = render(<Skeleton className="w-10 h-10" />);
-      expect(container).toMatchSnapshot();
+      expect(container.innerHTML).toMatchSnapshot();
     });
 
     it("GiftCardSkeleton matches snapshot", () => {
       const { container } = render(<GiftCardSkeleton />);
-      expect(container).toMatchSnapshot();
+      expect(container.innerHTML).toMatchSnapshot();
     });
   });
 });
