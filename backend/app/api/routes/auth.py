@@ -343,6 +343,14 @@ async def login_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь не найден. Зарегистрируйтесь.",
         )
+    # Validate stored password presence to avoid internal server errors
+    if not isinstance(user.hashed_password, str) or not user.hashed_password:
+        logger.warning("Auth login: invalid stored password for user_id=%s", user.id)
+        audit_login_failed(request, payload.email, "invalid_password")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный пароль.",
+        )
     try:
         password_ok = verify_password(payload.password, user.hashed_password)
     except Exception:
@@ -352,8 +360,8 @@ async def login_user(
             user.id,
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный пароль.",
         )
     if not password_ok:
         logger.info("Auth login invalid password id=%s user_id=%s", request_id, user.id)
@@ -363,25 +371,37 @@ async def login_user(
             detail="Неверный пароль.",
         )
 
-    token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
-    _set_auth_cookie(
-        response,
-        token,
-        remember_me=payload.remember_me,
-        session_days=payload.session_days,
-    )
-    _set_refresh_cookie(
-        response,
-        refresh_token,
-        remember_me=payload.remember_me,
-        session_days=payload.session_days,
-    )
-    _set_session_prefs_cookie(
-        response,
-        remember_me=payload.remember_me,
-        session_days=payload.session_days,
-    )
+    # Step 1: create tokens
+    try:
+        token = create_access_token(str(user.id))
+        refresh_token = create_refresh_token(str(user.id))
+    except Exception as e:
+        logger.exception("Auth login token creation failed for user_id=%s email=%s: %s", getattr(user, 'id', None), payload.email, e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+    # Step 2: set cookies
+    try:
+        _set_auth_cookie(
+            response,
+            token,
+            remember_me=payload.remember_me,
+            session_days=payload.session_days,
+        )
+        _set_refresh_cookie(
+            response,
+            refresh_token,
+            remember_me=payload.remember_me,
+            session_days=payload.session_days,
+        )
+        _set_session_prefs_cookie(
+            response,
+            remember_me=payload.remember_me,
+            session_days=payload.session_days,
+        )
+    except Exception as e:
+        logger.exception("Auth login cookies setup failed for user_id=%s email=%s: %s", getattr(user, 'id', None), payload.email, e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
     audit_login_success(request, user.id, user.email)
     logger.info("Auth login success id=%s user_id=%s", request_id, user.id)
     return UserPublic.model_validate(user)
