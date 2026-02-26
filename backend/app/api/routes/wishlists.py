@@ -539,8 +539,9 @@ async def _load_wishlist_with_gifts_retry(
 
 
 async def _invalidate_wishlist_cache(wishlist: Wishlist) -> None:
-    await wishlist_cache.invalidate_wishlist(wishlist.slug)
-    await wishlist_cache.invalidate_lists(wishlist.owner_id)
+    if wishlist_cache:
+        await wishlist_cache.invalidate_wishlist(wishlist.slug)
+        await wishlist_cache.invalidate_lists(wishlist.owner_id)
 
 
 async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User | None) -> bool:
@@ -730,12 +731,13 @@ async def list_my_wishlists(
                 )
             )
 
-    await wishlist_cache.set_list(
-        current_user.id,
-        limit,
-        offset,
-        [wishlist.model_dump() for wishlist in result_list],
-    )
+    if wishlist_cache:
+        await wishlist_cache.set_list(
+            current_user.id,
+            limit,
+            offset,
+            [wishlist.model_dump() for wishlist in result_list],
+        )
     duration_ms = (perf_counter() - start_time) * 1000.0
     _record_list(duration_ms, cached=False, error=False)
     if duration_ms >= settings.wishlist_slow_ms:
@@ -870,7 +872,7 @@ async def get_wishlist_by_token(
     response.headers["Cache-Control"] = "public, max-age=60"
 
     try:
-        cached = await wishlist_cache.get_item(wishlist.slug, "public")
+        cached = await _get_cached_item(wishlist.slug, "public")
         if cached:
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=True, error=False)
@@ -878,7 +880,7 @@ async def get_wishlist_by_token(
                 logger.warning("get_wishlist_by_token slow cache token=%s duration_ms=%.2f", token, duration_ms)
             return WishlistPublic.model_validate(cached)
         result = await _load_wishlist_with_gifts_retry(db, wishlist, None)
-        await wishlist_cache.set_item(wishlist.slug, "public", result.model_dump())
+        await _set_cached_item(wishlist.slug, "public", result.model_dump())
         duration_ms = (perf_counter() - start_time) * 1000.0
         _record_item(duration_ms, cached=False, error=False)
         if duration_ms >= settings.wishlist_slow_ms:
@@ -927,7 +929,7 @@ async def get_wishlist_by_slug(
     if wishlist.privacy in ("public", "link_only"):
         try:
             role = "owner" if viewer_is_owner else ("friend" if viewer else "public")
-            cached = await wishlist_cache.get_item(wishlist.slug, role)
+            cached = await _get_cached_item(wishlist.slug, role)
             if cached:
                 duration_ms = (perf_counter() - start_time) * 1000.0
                 _record_item(duration_ms, cached=True, error=False)
@@ -935,7 +937,7 @@ async def get_wishlist_by_slug(
                     logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
                 return WishlistPublic.model_validate(cached)
             result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-            await wishlist_cache.set_item(wishlist.slug, role, result.model_dump())
+            await _set_cached_item(wishlist.slug, role, result.model_dump())
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=False, error=False)
             if duration_ms >= settings.wishlist_slow_ms:
@@ -955,7 +957,7 @@ async def get_wishlist_by_slug(
         if not has_access:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         try:
-            cached = await wishlist_cache.get_item(wishlist.slug, "friend")
+            cached = await _get_cached_item(wishlist.slug, "friend")
             if cached:
                 duration_ms = (perf_counter() - start_time) * 1000.0
                 _record_item(duration_ms, cached=True, error=False)
@@ -963,7 +965,7 @@ async def get_wishlist_by_slug(
                     logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
                 return WishlistPublic.model_validate(cached)
             result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-            await wishlist_cache.set_item(wishlist.slug, "friend", result.model_dump())
+            await _set_cached_item(wishlist.slug, "friend", result.model_dump())
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=False, error=False)
             if duration_ms >= settings.wishlist_slow_ms:
@@ -977,7 +979,7 @@ async def get_wishlist_by_slug(
 
     try:
         role = "owner" if viewer_is_owner else ("friend" if viewer else "public")
-        cached = await wishlist_cache.get_item(wishlist.slug, role)
+        cached = await _get_cached_item(wishlist.slug, role)
         if cached:
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=True, error=False)
@@ -985,7 +987,7 @@ async def get_wishlist_by_slug(
                 logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
             return WishlistPublic.model_validate(cached)
         result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-        await wishlist_cache.set_item(wishlist.slug, role, result.model_dump())
+        await _set_cached_item(wishlist.slug, role, result.model_dump())
         duration_ms = (perf_counter() - start_time) * 1000.0
         _record_item(duration_ms, cached=False, error=False)
         if duration_ms >= settings.wishlist_slow_ms:

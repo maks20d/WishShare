@@ -19,8 +19,17 @@ from sqlalchemy.engine import make_url
 
 from app.api.routes import auth, og, wishlists, ws
 from app.core.config import settings
-from app.core.wishlist_cache import wishlist_cache
-from app.core.wishlist_metrics import wishlist_metrics
+
+try:
+    from app.core.wishlist_cache import wishlist_cache
+except Exception:
+    wishlist_cache = None
+
+try:
+    from app.core.wishlist_metrics import wishlist_metrics
+except Exception:
+    wishlist_metrics = None
+
 from app.core.logger import configure_logging
 from app.db.session import Base, engine
 
@@ -365,7 +374,9 @@ async def health_ready() -> dict[str, object]:
     except Exception:
         logger.warning("Health check: DB connection failed")
     
-    cache_ok = await wishlist_cache.ping()
+    cache_ok = False
+    if wishlist_cache:
+        cache_ok = await wishlist_cache.ping()
     
     overall = "ok" if db_ok else "degraded"
     if not cache_ok:
@@ -411,7 +422,8 @@ async def get_metrics() -> dict[str, object]:
         }
         for exp, variants in metrics["experiments"].items()
     }
-    wishlist_cache_stats = await wishlist_cache.get_stats()
+    wishlist_cache_stats = await wishlist_cache.get_stats() if wishlist_cache else {}
+    wishlist_metrics_data = wishlist_metrics.snapshot() if wishlist_metrics else {}
     return {
         "requests_total": metrics["requests_total"],
         "errors_total": metrics["errors_total"],
@@ -423,7 +435,7 @@ async def get_metrics() -> dict[str, object]:
         "by_path": by_path,
         "web_vitals": web_vitals,
         "experiments": experiments,
-        "wishlist_metrics": wishlist_metrics.snapshot(),
+        "wishlist_metrics": wishlist_metrics_data,
         "wishlist_cache": wishlist_cache_stats,
     }
 
@@ -481,8 +493,9 @@ def _handle_async_exception(loop, context) -> None:
 
 @app.get("/metrics/cache")
 async def get_cache_stats() -> dict[str, object]:
-    from app.core.wishlist_cache import wishlist_cache
-    return await wishlist_cache.get_stats()
+    if wishlist_cache:
+        return await wishlist_cache.get_stats()
+    return {"status": "disabled"}
 
 
 @app.get("/health/db")
