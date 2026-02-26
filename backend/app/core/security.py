@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import logging
+import secrets
 from typing import Any
 from uuid import uuid4
 
@@ -6,6 +8,17 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+
+_dev_logger = logging.getLogger("wishshare.security")
+_insecure_keys = {"CHANGE_ME", "your-secret-key-here-change-in-production", "secret", "jwt_secret", "changeme", ""}
+
+if not settings.jwt_secret_key or settings.jwt_secret_key in _insecure_keys or len(settings.jwt_secret_key) < 32:
+    env = getattr(settings, "environment", "local") or "local"
+    if env.lower() == "local":
+        settings.jwt_secret_key = secrets.token_urlsafe(64)
+        _dev_logger.warning("JWT_SECRET_KEY was missing/insecure; generated ephemeral key for local dev")
+    else:
+        raise RuntimeError("JWT_SECRET_KEY must be set to a secure value (32+ chars) in production")
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
