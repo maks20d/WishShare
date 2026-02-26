@@ -44,6 +44,9 @@ function startServer() {
 
 try {
   prepareStandalone();
+  if (process.argv.includes('--prepare-only')) {
+    process.exit(0);
+  }
   startServer();
 } catch {
   process.exit(1);

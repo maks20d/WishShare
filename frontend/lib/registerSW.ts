@@ -7,6 +7,12 @@ function isDevelopmentRuntime(): boolean {
   return process.env.NODE_ENV === "development";
 }
 
+function isLocalhostRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1";
+}
+
 async function cleanupDevelopmentServiceWorkers(): Promise<void> {
   if (!("serviceWorker" in navigator)) return;
 
@@ -40,7 +46,7 @@ export function registerServiceWorker(): () => void {
 
   // In development mode, service worker caching causes stale Turbopack chunks
   // and frequent ChunkLoadError after hot updates/restarts.
-  if (isDevelopmentRuntime()) {
+  if (isDevelopmentRuntime() || isLocalhostRuntime()) {
     void cleanupDevelopmentServiceWorkers();
     console.log("[PWA] Service Worker disabled in development mode");
     return () => {};

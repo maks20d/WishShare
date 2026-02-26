@@ -21,6 +21,16 @@ function resolveApiBase(): string {
 }
 
 const API_BASE = resolveApiBase();
+function isLocalBackend(base: string): boolean {
+  if (base.startsWith("/")) return false;
+  try {
+    const url = new URL(base);
+    return isLocalDevHost(url.hostname) && (url.port === "8000" || url.port === "");
+  } catch {
+    return false;
+  }
+}
+const IS_LOCAL_BACKEND = isLocalBackend(API_BASE);
 import { logger } from "./logger";
 if (process.env.NODE_ENV !== "production") {
   logger.info("API base URL resolved", { base: API_BASE });
@@ -78,6 +88,64 @@ const handleUnauthorizedRedirect = () => {
   */
 };
 
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function extractDetailMessage(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim().length > 0) return detail;
+  if (Array.isArray(detail)) {
+    const messages: string[] = [];
+    for (const item of detail) {
+      if (!item) continue;
+      if (typeof item === "string" && item.trim().length > 0) {
+        messages.push(item.trim());
+        continue;
+      }
+      if (typeof item === "object" && "msg" in item) {
+        const msg = (item as { msg?: unknown }).msg;
+        if (typeof msg === "string" && msg.trim().length > 0) {
+          messages.push(msg.trim());
+        }
+      }
+    }
+    const unique = Array.from(new Set(messages));
+    if (unique.length > 0) return unique.slice(0, 3).join("; ");
+  }
+  return null;
+}
+
+function redactSensitive(value: unknown, depth: number = 0): unknown {
+  if (depth > 4) return "[redacted]";
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((item) => redactSensitive(item, depth + 1));
+  }
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(obj)) {
+    const normalized = key.toLowerCase();
+    if (
+      normalized.includes("password") ||
+      normalized === "token" ||
+      normalized.endsWith("_token") ||
+      normalized === "authorization" ||
+      normalized === "cookie" ||
+      normalized === "set-cookie"
+    ) {
+      result[key] = "[redacted]";
+      continue;
+    }
+    result[key] = redactSensitive(v, depth + 1);
+  }
+  return result;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   const method = options.method ?? "GET";
@@ -101,13 +169,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         let responseBody: unknown = undefined;
         try {
           responseBody = await res.clone().json();
-          if (
-            responseBody &&
-            typeof responseBody === "object" &&
-            "detail" in responseBody &&
-            typeof (responseBody as { detail?: string }).detail === "string"
-          ) {
-            message = (responseBody as { detail?: string }).detail ?? message;
+          if (responseBody && typeof responseBody === "object" && "detail" in responseBody) {
+            const detail = (responseBody as { detail?: unknown }).detail;
+            const extracted = extractDetailMessage(detail);
+            if (extracted) {
+              message = extracted;
+            }
           }
         } catch {
           try {
@@ -133,8 +200,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         error.status = res.status;
         error.url = url;
         error.method = method;
-        error.requestBody = options.body ? safeJsonParse(options.body) : undefined;
-        error.responseBody = responseBody;
+        error.requestBody = options.body ? redactSensitive(safeJsonParse(options.body)) : undefined;
+        error.responseBody = redactSensitive(responseBody);
         if (res.status === 401) error.code = "UNAUTHORIZED";
         else if (res.status === 403) error.code = "FORBIDDEN";
         else if (res.status >= 500) error.code = "SERVER_ERROR";
@@ -145,13 +212,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         } else if (res.status === 404 && method === "GET") {
           logger.warn("API request returned 404", { url, method, status: res.status });
         } else {
+          const responseBodyPreview =
+            typeof responseBody === "string"
+              ? responseBody.slice(0, 1500)
+              : safeJsonStringify(redactSensitive(responseBody)).slice(0, 1500);
           logger.error("API request failed", {
             url,
             method,
             status: res.status,
             code: error.code,
             requestBody: error.requestBody,
-            responseBody,
+            responseBodyPreview,
             stack: error.stack
           });
         }
@@ -187,7 +258,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       error.code = error.code ?? "NETWORK_ERROR";
       error.url = url;
       error.method = method;
-      error.requestBody = options.body ? safeJsonParse(options.body) : undefined;
+      error.requestBody = options.body ? redactSensitive(safeJsonParse(options.body)) : undefined;
+      if (error.code === "NETWORK_ERROR" && IS_LOCAL_BACKEND) {
+        const message = "Backend unavailable on http://localhost:8000";
+        error.message = message;
+        error.responseBody = { detail: message };
+      }
 
       const logPayload = {
         url,
@@ -195,6 +271,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         code: error.code,
         requestBody: error.requestBody,
         error: error.message,
+        responseBody: error.responseBody,
         stack: error.stack
       };
       if (error.code === "NETWORK_ERROR") {

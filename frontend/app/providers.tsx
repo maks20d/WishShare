@@ -46,6 +46,9 @@ function SessionBootstrap() {
 
 function WebVitalsReporter() {
   useReportWebVitals((metric) => {
+    if (process.env.NODE_ENV !== "production") {
+      return;
+    }
     const payload = {
       name: metric.name,
       value: metric.value,
