@@ -768,9 +768,6 @@ async def list_my_wishlists(
         logger.warning("list_my_wishlists slow user_id=%s duration_ms=%.2f", current_user.id, duration_ms)
     logger.info("list_my_wishlists: returned %d wishlists for user_id=%s", len(result_list), current_user.id)
     return result_list
-except Exception:
-    logger.exception("list_my_wishlists: unexpected error for user_id=%s", getattr(current_user, 'id', None))
-    raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/{slug}", response_model=WishlistPublic)
