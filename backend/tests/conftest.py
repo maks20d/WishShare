@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 # Set environment variables BEFORE importing app modules
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["POSTGRES_DSN"] = "sqlite+aiosqlite:///file:wishshare_tests?mode=memory&cache=shared&uri=true"
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-32-chars-minimum!!"
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
