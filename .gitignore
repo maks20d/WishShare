@@ -1,16 +1,28 @@
-# Node/Next dev and build artifacts
 frontend/.next/
 frontend/.next-dev/
 frontend/coverage/
 frontend/.turbo/
+frontend/node_modules/
+frontend/.tmp/
+frontend/test-results/
+frontend/tsconfig.tsbuildinfo
 
-# Python test/db artifacts
+frontend/.env.local
+.env
+backend/.env
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
 *.db-journal
 backend/tests/*.db-journal
 wishshare.db
 wishshare.db-journal
+backend/e2e.db
+backend/tests/test_runtime.db
 
-# OS/IDE
 .DS_Store
 Thumbs.db
 .vscode/
