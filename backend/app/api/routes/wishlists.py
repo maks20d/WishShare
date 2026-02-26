@@ -21,8 +21,12 @@ logger = logging.getLogger("wishshare.wishlists")
 try:
     from app.core.wishlist_cache import wishlist_cache
 except Exception:
-    logger.warning("wishlist_cache import failed, using disabled cache")
     wishlist_cache = None
+    try:
+        from app.core.cache_null import NullWishlistCache
+        wishlist_cache = NullWishlistCache()
+    except Exception:
+        wishlist_cache = None
 
 try:
     from app.core.wishlist_metrics import wishlist_metrics
@@ -70,36 +74,58 @@ def _record_item(duration_ms: float, cached: bool, error: bool) -> None:
 
 async def _get_cached_list(user_id: int, limit: int, offset: int):
     if wishlist_cache:
-        return await wishlist_cache.get_list(user_id, limit, offset)
+        try:
+            return await wishlist_cache.get_list(user_id, limit, offset)
+        except Exception:
+            logger.exception("wishlist_cache.get_list failed")
+            return None
     return None
 
 
 async def _set_cached_list(user_id: int, limit: int, offset: int, data: list) -> bool:
     if wishlist_cache:
-        return await wishlist_cache.set_list(user_id, limit, offset, data)
+        try:
+            return await wishlist_cache.set_list(user_id, limit, offset, data)
+        except Exception:
+            logger.exception("wishlist_cache.set_list failed")
+            return False
     return False
 
 
 async def _get_cached_item(slug: str, role: str):
     if wishlist_cache:
-        return await wishlist_cache.get_item(slug, role)
+        try:
+            return await wishlist_cache.get_item(slug, role)
+        except Exception:
+            logger.exception("wishlist_cache.get_item failed")
+            return None
     return None
 
 
 async def _set_cached_item(slug: str, role: str, data: dict) -> bool:
     if wishlist_cache:
-        return await wishlist_cache.set_item(slug, role, data)
+        try:
+            return await wishlist_cache.set_item(slug, role, data)
+        except Exception:
+            logger.exception("wishlist_cache.set_item failed")
+            return False
     return False
 
 
 async def _invalidate_wishlist(slug: str) -> None:
     if wishlist_cache:
-        await wishlist_cache.invalidate_wishlist(slug)
+        try:
+            await wishlist_cache.invalidate_wishlist(slug)
+        except Exception:
+            logger.exception("wishlist_cache.invalidate_wishlist failed")
 
 
 async def _invalidate_lists(user_id: int) -> None:
     if wishlist_cache:
-        await wishlist_cache.invalidate_lists(user_id)
+        try:
+            await wishlist_cache.invalidate_lists(user_id)
+        except Exception:
+            logger.exception("wishlist_cache.invalidate_lists failed")
 
 
 def _wishlist_fallback(
@@ -589,15 +615,14 @@ async def list_my_wishlists(
     limit = min(max(1, limit), 100)
     offset = max(0, offset)
 
-    if wishlist_cache:
-        cached_list = await wishlist_cache.get_list(current_user.id, limit, offset)
-        if cached_list:
-            duration_ms = (perf_counter() - start_time) * 1000.0
-            if wishlist_metrics:
-                _record_list(duration_ms, cached=True, error=False)
-            if duration_ms >= settings.wishlist_slow_ms:
-                logger.warning("list_my_wishlists slow cache user_id=%s duration_ms=%.2f", current_user.id, duration_ms)
-            return [WishlistPublic.model_validate(item) for item in cached_list]
+    cached_list = await _get_cached_list(current_user.id, limit, offset)
+    if cached_list:
+        duration_ms = (perf_counter() - start_time) * 1000.0
+        if wishlist_metrics:
+            _record_list(duration_ms, cached=True, error=False)
+        if duration_ms >= settings.wishlist_slow_ms:
+            logger.warning("list_my_wishlists slow cache user_id=%s duration_ms=%.2f", current_user.id, duration_ms)
+        return [WishlistPublic.model_validate(item) for item in cached_list]
 
     logger.info("list_my_wishlists: starting for user_id=%s limit=%s offset=%s", current_user.id, limit, offset)
 
@@ -731,13 +756,12 @@ async def list_my_wishlists(
                 )
             )
 
-    if wishlist_cache:
-        await wishlist_cache.set_list(
-            current_user.id,
-            limit,
-            offset,
-            [wishlist.model_dump() for wishlist in result_list],
-        )
+    await _set_cached_list(
+        current_user.id,
+        limit,
+        offset,
+        [wishlist.model_dump() for wishlist in result_list],
+    )
     duration_ms = (perf_counter() - start_time) * 1000.0
     _record_list(duration_ms, cached=False, error=False)
     if duration_ms >= settings.wishlist_slow_ms:
