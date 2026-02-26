@@ -19,6 +19,8 @@ from sqlalchemy.engine import make_url
 
 from app.api.routes import auth, og, wishlists, ws
 from app.core.config import settings
+from app.core.wishlist_cache import wishlist_cache
+from app.core.wishlist_metrics import wishlist_metrics
 from app.core.logger import configure_logging
 from app.db.session import Base, engine
 
@@ -338,6 +340,32 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/health/ready")
+async def health_ready() -> dict[str, object]:
+    db_ok = False
+    db_latency_ms = None
+    try:
+        start = perf_counter()
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("SELECT 1")
+        db_latency_ms = round((perf_counter() - start) * 1000, 2)
+        db_ok = True
+    except Exception:
+        logger.warning("Health check: DB connection failed")
+    
+    cache_ok = await wishlist_cache.ping()
+    
+    overall = "ok" if db_ok else "degraded"
+    if not cache_ok:
+        overall = "degraded"
+    
+    return {
+        "status": overall,
+        "db": {"ok": db_ok, "latency_ms": db_latency_ms},
+        "cache": {"ok": cache_ok},
+    }
+
+
 @app.get("/metrics")
 async def get_metrics() -> dict[str, object]:
     by_path = {
@@ -371,6 +399,7 @@ async def get_metrics() -> dict[str, object]:
         }
         for exp, variants in metrics["experiments"].items()
     }
+    wishlist_cache_stats = await wishlist_cache.get_stats()
     return {
         "requests_total": metrics["requests_total"],
         "errors_total": metrics["errors_total"],
@@ -382,6 +411,8 @@ async def get_metrics() -> dict[str, object]:
         "by_path": by_path,
         "web_vitals": web_vitals,
         "experiments": experiments,
+        "wishlist_metrics": wishlist_metrics.snapshot(),
+        "wishlist_cache": wishlist_cache_stats,
     }
 
 
@@ -436,15 +467,42 @@ def _handle_async_exception(loop, context) -> None:
         logger.error("Async error: %s", message)
 
 
-# Health check endpoint for debugging
+@app.get("/metrics/cache")
+async def get_cache_stats() -> dict[str, object]:
+    from app.core.wishlist_cache import wishlist_cache
+    return await wishlist_cache.get_stats()
+
+
 @app.get("/health/db")
 async def health_db():
+    from app.db.session import engine
+    from sqlalchemy import text
+    
     try:
-        from app.db.session import async_session_factory
-        from sqlalchemy import select
-        async with async_session_factory() as session:
-            result = await session.execute(select(1))
-            return {"status": "ok", "database": str(result.scalar())}
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            await conn.commit()
+            
+        pool = engine.pool
+        pool_status = {
+            "size": getattr(pool, "size", lambda: 0)() if pool else 0,
+            "checked_in": getattr(pool, "checked_in", lambda: 0)() if pool else 0,
+            "checked_out": getattr(pool, "checked_out", lambda: 0)() if pool else 0,
+            "overflow": getattr(pool, "overflow", lambda: 0)() if pool else 0,
+        }
+        
+        return {
+            "status": "ok", 
+            "database": "connected",
+            "pool": pool_status,
+        }
     except Exception as e:
         logger.exception("DB health check failed")
-        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
+        return JSONResponse(
+            status_code=500, 
+            content={
+                "status": "error", 
+                "error": str(e),
+                "database": "disconnected"
+            }
+        )

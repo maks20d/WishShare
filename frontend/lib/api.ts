@@ -38,7 +38,7 @@ if (process.env.NODE_ENV !== "production") {
 
 export type ApiError = Error & {
   status?: number;
-  code?: "UNAUTHORIZED" | "FORBIDDEN" | "SERVER_ERROR" | "NETWORK_ERROR";
+  code?: "UNAUTHORIZED" | "FORBIDDEN" | "SERVER_ERROR" | "NETWORK_ERROR" | "TIMEOUT";
   url?: string;
   method?: string;
   requestBody?: unknown;
@@ -46,7 +46,8 @@ export type ApiError = Error & {
 };
 
 const RETRY_BASE_MS = 300;
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 15000;
 const AUTH_REFRESH_PATH = "/auth/refresh";
 const AUTH_NO_REFRESH = new Set(["/auth/login", "/auth/register", "/auth/logout", AUTH_REFRESH_PATH]);
 let refreshInFlight: Promise<boolean> | null = null;
@@ -146,6 +147,33 @@ function redactSensitive(value: unknown, depth: number = 0): unknown {
   return result;
 }
 
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const { timeout = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      const error: ApiError = new Error(`Request timeout after ${timeout}ms`);
+      error.code = "TIMEOUT";
+      throw error;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   const method = options.method ?? "GET";
@@ -155,7 +183,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   while (attempt <= MAX_RETRIES) {
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         ...options,
         headers: {
           "Content-Type": "application/json",
@@ -249,7 +277,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       return res.json() as Promise<T>;
     } catch (err) {
       const known = err as ApiError;
-      if (known && typeof known.status === "number") {
+      if (known && (typeof known.status === "number" || known.code === "TIMEOUT")) {
+        if (known.code === "TIMEOUT" && attempt < MAX_RETRIES) {
+          lastError = known;
+          attempt += 1;
+          await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+          continue;
+        }
         throw known;
       }
 
@@ -274,7 +308,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         responseBody: error.responseBody,
         stack: error.stack
       };
-      if (error.code === "NETWORK_ERROR") {
+      if (error.code === "NETWORK_ERROR" || error.code === "TIMEOUT") {
         logger.warn("API request failed", logPayload);
       } else {
         logger.error("API request failed", logPayload);

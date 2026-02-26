@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     parser_browser_timeout_ms: int = 45000
     log_level: str = "INFO"
     log_file: str = ""
+    wishlist_cache_enabled: bool = True
+    wishlist_cache_ttl_public: int = 60
+    wishlist_cache_ttl_private: int = 20
+    wishlist_cache_ttl_list: int = 15
+    wishlist_slow_ms: int = 800
 
     sentry_dsn: str | None = None
 

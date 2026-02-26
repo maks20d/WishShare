@@ -26,22 +26,23 @@ services:
     networks:
       - wishshare-network
 
-  # Redis для кэширования
+  # Redis для кэширования (без пароля для local dev)
   redis:
     image: redis:7-alpine
     container_name: wishshare-redis
     restart: unless-stopped
-    # SECURITY: Removed default password - must be set via REDIS_PASSWORD env var
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    # Без пароля для local development
+    # Для production раскомментируйте и используйте REDIS_PASSWORD
+    command: redis-server --appendonly yes
+    # command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     # FIX: Port exposed only for development - use profile for production
     # In production, remove port mapping to prevent external access
     ports:
       - "6379:6379"
-    # FIX: Healthcheck now properly authenticates with Redis
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -60,15 +61,25 @@ services:
       - BACKEND_URL=${BACKEND_URL:-http://localhost:8000}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001}
-      # SECURITY: POSTGRES_PASSWORD must be set - no default value
-      - POSTGRES_DSN=postgresql+asyncpg://wishshare:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/wishshare
-      # SECURITY: REDIS_PASSWORD must be set - no default value
-      - REDIS_DSN=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      # Database
+      - POSTGRES_DSN=${POSTGRES_DSN:-postgresql+asyncpg://wishshare:${POSTGRES_PASSWORD}@postgres:5432/wishshare}
+      # Redis - без пароля для local dev, с паролем для production
+      - REDIS_DSN=${REDIS_DSN:-redis://redis:6379/0}
       # SECURITY: JWT_SECRET_KEY must be set - no default value
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       - JWT_ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=10080
       - PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
+      # Caching
+      - WISHLIST_CACHE_ENABLED=${WISHLIST_CACHE_ENABLED:-true}
+      - WISHLIST_CACHE_TTL_PUBLIC=${WISHLIST_CACHE_TTL_PUBLIC:-60}
+      - WISHLIST_CACHE_TTL_PRIVATE=${WISHLIST_CACHE_TTL_PRIVATE:-20}
+      - WISHLIST_CACHE_TTL_LIST=${WISHLIST_CACHE_TTL_LIST:-15}
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-10}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
@@ -81,7 +92,8 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - PARSER_BROWSER_FALLBACK=${PARSER_BROWSER_FALLBACK:-true}
       - PARSER_BROWSER_DOMAINS=${PARSER_BROWSER_DOMAINS:-ozon.ru,wildberries.ru,lamoda.ru,aliexpress.com,amazon.com,amazon.ru}
-      - PARSER_BROWSER_TIMEOUT_MS=${PARSER_BROWSER_TIMEOUT_MS:-45000}
+      - PARSER_BROWSER_TIMEOUT_MS=${PARSER_BROWSER_TIMEOUT_MS:-30000}
+      - SENTRY_DSN=${SENTRY_DSN:-}
     ports:
       - "8000:8000"
     depends_on:
