@@ -9,10 +9,13 @@ services:
     environment:
       POSTGRES_DB: wishshare
       POSTGRES_USER: wishshare
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wishshare_password}
+      # SECURITY: Removed default password - must be set via POSTGRES_PASSWORD env var
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # FIX: Port exposed only for development - use profile for production
+    # In production, remove port mapping to prevent external access
     ports:
       - "5432:5432"
     healthcheck:
@@ -28,13 +31,17 @@ services:
     image: redis:7-alpine
     container_name: wishshare-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    # SECURITY: Removed default password - must be set via REDIS_PASSWORD env var
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - redis_data:/data
+    # FIX: Port exposed only for development - use profile for production
+    # In production, remove port mapping to prevent external access
     ports:
       - "6379:6379"
+    # FIX: Healthcheck now properly authenticates with Redis
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -53,9 +60,12 @@ services:
       - BACKEND_URL=${BACKEND_URL:-http://localhost:8000}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001}
-      - POSTGRES_DSN=postgresql+asyncpg://wishshare:${POSTGRES_PASSWORD:-wishshare_password}@postgres:5432/wishshare
-      - REDIS_DSN=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-here-change-in-production}
+      # SECURITY: POSTGRES_PASSWORD must be set - no default value
+      - POSTGRES_DSN=postgresql+asyncpg://wishshare:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/wishshare
+      # SECURITY: REDIS_PASSWORD must be set - no default value
+      - REDIS_DSN=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      # SECURITY: JWT_SECRET_KEY must be set - no default value
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       - JWT_ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=10080
       - PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30

@@ -1,10 +1,11 @@
 """
 Async-safe email sender.
 
-smtplib is blocking; we wrap every send in asyncio.get_event_loop().run_in_executor
+smtplib is blocking; we wrap every send in asyncio.get_running_loop().run_in_executor
 so that the FastAPI event loop is never blocked waiting for SMTP.
 """
 import asyncio
+import html
 import logging
 import smtplib
 from email.message import EmailMessage
@@ -18,13 +19,26 @@ logger = logging.getLogger("wishshare.mailer")
 
 
 def _get_base_html_template(title: str, content: str, button_text: Optional[str] = None, button_link: Optional[str] = None) -> str:
-    """Базовый HTML-шаблон для писем WishShare."""
+    """
+    Базовый HTML-шаблон для писем WishShare.
+    
+    SECURITY FIX: Все пользовательские данные экранируются через html.escape()
+    для предотвращения XSS атак в email клиентах.
+    """
+    # Экранируем все пользовательские данные для предотвращения XSS
+    safe_title = html.escape(title)
+    safe_content = html.escape(content)
+    
     button_html = ""
     if button_text and button_link:
+        # Экранируем текст кнопки и валидируем URL
+        safe_button_text = html.escape(button_text)
+        # Для URL экранируем только кавычки, чтобы не сломать валидные ссылки
+        safe_button_link = button_link.replace('"', '&quot;').replace("'", '&#x27;')
         button_html = f'''
         <div style="text-align: center; margin: 30px 0;">
-            <a href="{button_link}" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
-                {button_text}
+            <a href="{safe_button_link}" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                {safe_button_text}
             </a>
         </div>'''
     
@@ -33,7 +47,7 @@ def _get_base_html_template(title: str, content: str, button_text: Optional[str]
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{safe_title}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -48,12 +62,12 @@ def _get_base_html_template(title: str, content: str, button_text: Optional[str]
                 
                 <!-- Title -->
                 <h2 style="margin: 0 0 20px 0; font-size: 22px; color: #1f2937; text-align: center;">
-                    {title}
+                    {safe_title}
                 </h2>
                 
                 <!-- Content -->
                 <div style="color: #4b5563; font-size: 16px; line-height: 1.6;">
-                    {content}
+                    {safe_content}
                 </div>
                 
                 {button_html}
@@ -147,7 +161,9 @@ async def _send_async(msg: EmailMessage) -> None:
     if not settings.smtp_host:
         logger.info("SMTP not configured – skipping send to %s (subject: %s)", msg["To"], msg["Subject"])
         return
-    loop = asyncio.get_event_loop()
+    # FIX: Используем get_running_loop() вместо устаревшего get_event_loop()
+    # get_event_loop() deprecated в Python 3.10+ и может вызывать DeprecationWarning
+    loop = asyncio.get_running_loop()
     try:
         await loop.run_in_executor(None, _send_sync, msg)
         logger.info("Email sent to %s subject=%r", msg["To"], msg["Subject"])

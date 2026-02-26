@@ -39,8 +39,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7
     refresh_token_expire_minutes: int = 60 * 24 * 30
     password_reset_token_expire_minutes: int = 30
-    # SECURITY: override via JWT_SECRET_KEY env var; app refuses to start with default
-    jwt_secret_key: str = "CHANGE_ME"
+    # SECURITY FIX: Default is None - must be set via JWT_SECRET_KEY env var
+    # App should refuse to start if not set in production
+    jwt_secret_key: str | None = None
     jwt_algorithm: str = "HS256"
 
     google_client_id: str = ""
@@ -81,6 +82,11 @@ class Settings(BaseSettings):
 
     def validate_secrets(self) -> None:
         """Refuse to start with insecure defaults."""
+        if not self.jwt_secret_key:
+            raise RuntimeError(
+                "JWT_SECRET_KEY is not set. "
+                "Set a strong random secret via the JWT_SECRET_KEY environment variable."
+            )
         if self.jwt_secret_key == "CHANGE_ME":
             raise RuntimeError(
                 "JWT_SECRET_KEY is still the default 'CHANGE_ME'. "

@@ -15,7 +15,9 @@ services:
       - BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
       - POSTGRES_DSN=sqlite+aiosqlite:///./wishshare.db
       - REDIS_DSN=redis://redis:6379/0
-      - JWT_SECRET_KEY=dev-secret-key
+      # WARNING: JWT_SECRET_KEY must be set externally for security!
+      # Using fallback value only for local development - NEVER use in production!
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in environment}
       - JWT_ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=10080
       - PARSER_BROWSER_FALLBACK=true

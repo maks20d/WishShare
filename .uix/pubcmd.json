@@ -1,7 +1,7 @@
 {
     "base": {
-        "url": "http://127.0.0.1:20000",
-        "description": "通过http协议调用UIX插件的能力, \n调用方式：curl -X POST -H \"Content-Type: application/json\" -d '{}' http://http://127.0.0.1:20000/cmd/<commandId>\n以获取UIX插件的能力"
+        "url": "http://127.0.0.1:20001",
+        "description": "通过http协议调用UIX插件的能力, \n调用方式：curl -X POST -H \"Content-Type: application/json\" -d '{}' http://http://127.0.0.1:20001/cmd/<commandId>\n以获取UIX插件的能力"
     },
     "commands": {
         "uix.inspectImage": {

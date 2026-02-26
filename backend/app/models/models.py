@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum as StrEnumBase
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, Numeric, String
@@ -68,7 +69,8 @@ class Gift(Base):
     wishlist_id: Mapped[int] = mapped_column(ForeignKey("wishlists.id"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # FIX: Changed type from float to Decimal, since Numeric(12, 2) returns Decimal
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     is_collective: Mapped[bool] = mapped_column(Boolean, default=False)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -116,7 +118,7 @@ class Contribution(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     gift_id: Mapped[int] = mapped_column(ForeignKey("gifts.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
 
     gift: Mapped[Gift] = relationship(back_populates="contributions")
@@ -135,7 +137,7 @@ class WishlistItemArchive(Base):
     gift_id: Mapped[int] = mapped_column(Integer, index=True)
     title: Mapped[str] = mapped_column(String(255))
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    last_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
 
@@ -147,7 +149,7 @@ class WishlistDonation(Base):
     wishlist_id: Mapped[int] = mapped_column(ForeignKey("wishlists.id"), index=True)
     gift_id: Mapped[int] = mapped_column(Integer, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
 
     __table_args__ = (

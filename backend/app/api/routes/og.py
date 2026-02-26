@@ -435,6 +435,7 @@ async def _preview_with_playwright(target_url: str) -> OgPreviewResponse | None:
 
     browser = None
     context = None
+    page = None  # FIX: Track page for proper cleanup
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -589,6 +590,12 @@ async def _preview_with_playwright(target_url: str) -> OgPreviewResponse | None:
         logger.warning("Playwright fallback failed for %s: %s", target_url, exc)
         return None
     finally:
+        # FIX: Ensure all resources are properly closed in all error paths
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
         try:
             if context:
                 await context.close()
@@ -663,10 +670,12 @@ async def _preview_url_impl(payload: OgPreviewRequest) -> OgPreviewResponse:
     }
 
     resp = None
+    # SECURITY: Removed verify=False fallback to prevent MITM attacks.
+    # SSL verification is always enabled for production security.
+    # If SSL certificate issues occur, the request will fail gracefully.
     fetch_attempts = (
         {"trust_env": True, "verify": True, "name": "env-proxy"},
         {"trust_env": False, "verify": True, "name": "direct"},
-        {"trust_env": False, "verify": False, "name": "direct-insecure"},
     )
     attempt_errors: list[str] = []
     for attempt in fetch_attempts:

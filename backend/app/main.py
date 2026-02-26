@@ -10,7 +10,7 @@ from time import perf_counter
 import os
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Body, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -56,6 +56,10 @@ metrics = {
     "latency_total_ms": 0.0,
     "by_path": defaultdict(
         lambda: {"count": 0, "errors": 0, "latency_total_ms": 0.0}
+    ),
+    "web_vitals": defaultdict(lambda: {"count": 0, "sum": 0.0, "max": 0.0}),
+    "experiments": defaultdict(
+        lambda: defaultdict(lambda: {"exposures": 0, "conversions": 0})
     ),
 }
 
@@ -141,9 +145,11 @@ async def security_headers_middleware(request: Request, call_next):
             "default-src 'self'; "
             "img-src 'self' data: https:; "
             "style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "script-src 'self' 'unsafe-inline'; "
             "connect-src 'self' http: https: ws: wss:; "
-            "font-src 'self' data: https:;"
+            "font-src 'self' data: https:; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
         )
     return response
 
@@ -344,6 +350,27 @@ async def get_metrics() -> dict[str, object]:
         }
         for path, data in metrics["by_path"].items()
     }
+    web_vitals = {
+        name: {
+            "count": data["count"],
+            "avg": (data["sum"] / data["count"]) if data["count"] else 0.0,
+            "max": data["max"],
+        }
+        for name, data in metrics["web_vitals"].items()
+    }
+    experiments = {
+        exp: {
+            variant: {
+                "exposures": data["exposures"],
+                "conversions": data["conversions"],
+                "conversion_rate": (
+                    data["conversions"] / data["exposures"] if data["exposures"] else 0.0
+                ),
+            }
+            for variant, data in variants.items()
+        }
+        for exp, variants in metrics["experiments"].items()
+    }
     return {
         "requests_total": metrics["requests_total"],
         "errors_total": metrics["errors_total"],
@@ -353,7 +380,45 @@ async def get_metrics() -> dict[str, object]:
             else 0.0
         ),
         "by_path": by_path,
+        "web_vitals": web_vitals,
+        "experiments": experiments,
     }
+
+
+@app.post("/metrics/web-vitals")
+async def record_web_vitals(
+    payload: dict[str, object] = Body(...),
+) -> dict[str, str]:
+    name = payload.get("name")
+    value = payload.get("value")
+    if not isinstance(name, str) or not isinstance(value, (int, float)):
+        return {"status": "ignored"}
+    entry = metrics["web_vitals"][name]
+    entry["count"] += 1
+    entry["sum"] += float(value)
+    entry["max"] = max(entry["max"], float(value))
+    return {"status": "ok"}
+
+
+@app.post("/metrics/experiments")
+async def record_experiment_event(
+    payload: dict[str, object] = Body(...),
+) -> dict[str, str]:
+    experiment = payload.get("experiment")
+    variant = payload.get("variant")
+    event = payload.get("event")
+    if (
+        not isinstance(experiment, str)
+        or not isinstance(variant, str)
+        or event not in ("exposure", "conversion")
+    ):
+        return {"status": "ignored"}
+    bucket = metrics["experiments"][experiment][variant]
+    if event == "exposure":
+        bucket["exposures"] += 1
+    else:
+        bucket["conversions"] += 1
+    return {"status": "ok"}
 
 
 @app.get("/metrics/rate-limit")
