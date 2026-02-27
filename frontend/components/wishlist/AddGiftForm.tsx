@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useRef, DragEvent } from "react";
 import Image from "next/image";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
@@ -33,12 +33,50 @@ export default function AddGiftForm({ wishlist, onRefetch }: Props) {
   const [url, setUrl] = useState("");
   const [price, setPrice] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [imageMode, setImageMode] = useState<"url" | "file">("url");
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [isCollective, setIsCollective] = useState(false);
   const [isPrivate, setIsPrivate] = useState(false);
   const [isAutofilling, setIsAutofilling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const reset = () => { setTitle(""); setUrl(""); setPrice(""); setImageUrl(""); setIsCollective(false); setIsPrivate(false); };
+  const reset = () => {
+    setTitle("");
+    setUrl("");
+    setPrice("");
+    setImageUrl("");
+    setImageMode("url");
+    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    setLocalPreviewUrl(null);
+    setUploadingImage(false);
+    setIsCollective(false);
+    setIsPrivate(false);
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handlePickFile(file);
+    }
+  };
 
   const handleAutofill = async () => {
     if (!url) return;
@@ -86,6 +124,45 @@ export default function AddGiftForm({ wishlist, onRefetch }: Props) {
     }
   };
 
+  const handlePickFile = async (file: File | null) => {
+    if (!file) return;
+    setError(null);
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (!allowed.has(file.type)) {
+      setError("Поддерживаются только JPEG, PNG или WebP.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Размер файла не должен превышать 5 МБ.");
+      return;
+    }
+    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    const preview = URL.createObjectURL(file);
+    setLocalPreviewUrl(preview);
+    setUploadingImage(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const uploaded = await api.postForm<{ url: string; thumb_url: string }>("/uploads/images", form);
+      setImageUrl(uploaded.url);
+      toast("Изображение загружено", "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось загрузить изображение");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handlePickFile(e.target.files?.[0] || null);
+  };
+
+  const handleRemoveImage = () => {
+    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    setLocalPreviewUrl(null);
+    setImageUrl("");
+  };
+
   return (
     <section className="surface-panel p-5 md:p-7 space-y-4">
       <h2 className="text-xl font-semibold">Добавить подарок</h2>
@@ -110,8 +187,90 @@ export default function AddGiftForm({ wishlist, onRefetch }: Props) {
         <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Цена (₽, опционально)" type="number" min="1" step="any"
           className="rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
 
-        <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="URL изображения"
-          className="rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+        <div className="md:col-span-2 space-y-2">
+          <div role="group" aria-label="Способ добавления изображения" className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              aria-pressed={imageMode === "url"}
+              onClick={() => {
+                setImageMode("url");
+                setError(null);
+                if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+                setLocalPreviewUrl(null);
+                setUploadingImage(false);
+              }}
+              className={`rounded-xl px-4 py-3 text-sm border ${imageMode === "url" ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-100" : "border-[var(--line)] bg-slate-950/70 text-[var(--text-secondary)] hover:bg-slate-900/60"}`}
+            >
+              По ссылке
+            </button>
+            <button
+              type="button"
+              aria-pressed={imageMode === "file"}
+              onClick={() => {
+                setImageMode("file");
+                setError(null);
+              }}
+              className={`rounded-xl px-4 py-3 text-sm border ${imageMode === "file" ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-100" : "border-[var(--line)] bg-slate-950/70 text-[var(--text-secondary)] hover:bg-slate-900/60"}`}
+            >
+              Загрузить файл
+            </button>
+          </div>
+
+          {imageMode === "url" ? (
+            <input
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              placeholder="URL изображения (JPEG/PNG/WebP)"
+              className="w-full rounded-xl bg-slate-950/70 border border-[var(--line)] px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+          ) : (
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`relative rounded-xl border-2 border-dashed transition-colors ${
+                isDragging 
+                  ? "border-emerald-400 bg-emerald-400/10" 
+                  : "border-[var(--line)] bg-slate-950/70"
+              } px-4 py-5 text-center`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileInputChange}
+                disabled={uploadingImage}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                aria-label="Загрузить изображение"
+              />
+              <div className="space-y-2 pointer-events-none">
+                {uploadingImage ? (
+                  <>
+                    <div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full mx-auto" />
+                    <p className="text-sm text-[var(--text-secondary)]">Загрузка...</p>
+                  </>
+                ) : isDragging ? (
+                  <>
+                    <svg className="w-10 h-10 mx-auto text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <p className="text-sm text-emerald-100">Отпустите для загрузки</p>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-10 h-10 mx-auto text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <p className="text-sm text-[var(--text-secondary)]">
+                      Перетащите файл или <span className="text-emerald-400">выберите</span>
+                    </p>
+                    <p className="text-xs text-slate-500">JPEG, PNG, WebP до 5 МБ</p>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         <label className="rounded-xl border border-[var(--line)] px-4 py-3 flex items-center justify-between text-sm">
           <span className="text-[var(--text-secondary)]">Коллективный сбор</span>
@@ -123,9 +282,19 @@ export default function AddGiftForm({ wishlist, onRefetch }: Props) {
           <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-4 w-4 accent-emerald-400" />
         </label>
 
-        {imageUrl && (
-          <div className="md:col-span-2 h-32 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative">
-            <Image src={imageUrl} alt="Предпросмотр" fill sizes="100vw" className="object-cover" unoptimized />
+        {(localPreviewUrl || imageUrl) && (
+          <div className="md:col-span-2 h-32 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative group">
+            <Image src={localPreviewUrl || imageUrl} alt="Предпросмотр изображения" fill sizes="100vw" className="object-cover" unoptimized />
+            <button
+              type="button"
+              onClick={handleRemoveImage}
+              className="absolute top-2 right-2 bg-slate-900/80 hover:bg-red-500/80 text-white p-1.5 rounded-lg transition opacity-0 group-hover:opacity-100"
+              aria-label="Удалить изображение"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         )}
 
