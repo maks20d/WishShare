@@ -21,7 +21,7 @@ describe("AddGiftForm image upload", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Загрузить файл" }));
 
-    const input = screen.getByLabelText("Файл (до 5 МБ)") as HTMLInputElement;
+    const input = screen.getByLabelText("Загрузить изображение") as HTMLInputElement;
     expect(input.type).toBe("file");
 
     const file = new File(["hello"], "test.txt", { type: "text/plain" });
@@ -39,7 +39,7 @@ describe("AddGiftForm image upload", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Загрузить файл" }));
 
-    const input = screen.getByLabelText("Файл (до 5 МБ)") as HTMLInputElement;
+    const input = screen.getByLabelText("Загрузить изображение") as HTMLInputElement;
     expect(input.type).toBe("file");
 
     const bytes = new Uint8Array(5 * 1024 * 1024 + 1);
