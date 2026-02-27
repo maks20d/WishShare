@@ -8,6 +8,8 @@ import re
 import unicodedata
 from urllib.parse import urlparse
 
+from sqlalchemy import func
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -650,8 +652,21 @@ def _slugify(title: str) -> str:
 
 
 def _normalize_slug(slug: str) -> str:
-    """Normalize slug for consistent matching - handle unicode edge cases."""
-    return unicodedata.normalize("NFC", slug)
+    """Normalize slug for consistent matching - handle unicode edge cases.
+    
+    Uses NFD decomposition + lowercase + remove combining marks for
+    accent-insensitive matching (important for Cyrillic).
+    """
+    # Use NFD for decomposition + lowercase for case-insensitive matching
+    normalized = unicodedata.normalize("NFD", slug.lower())
+    # Remove combining diacritical marks (accents)
+    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return normalized
+
+
+def _slug_matches(db_slug: str, search_slug: str) -> bool:
+    """Check if database slug matches search slug with proper normalization."""
+    return _normalize_slug(db_slug) == _normalize_slug(search_slug)
 
 
 @router.get("", response_model=list[WishlistPublic])
@@ -835,7 +850,9 @@ async def update_wishlist(
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
     normalized_slug = _normalize_slug(slug)
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
+    result = await db.execute(
+        select(Wishlist).where(func.lower(Wishlist.slug) == normalized_slug.lower())
+    )
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -879,7 +896,9 @@ async def delete_wishlist(
     current_user: User = Depends(get_current_user),
 ) -> None:
     normalized_slug = _normalize_slug(slug)
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
+    result = await db.execute(
+        select(Wishlist).where(func.lower(Wishlist.slug) == normalized_slug.lower())
+    )
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -904,7 +923,9 @@ async def create_wishlist(
     slug = normalized_base
     suffix = 1
     while True:
-        existing = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+        existing = await db.execute(
+            select(Wishlist).where(func.lower(Wishlist.slug) == slug.lower())
+        )
         if not existing.scalar_one_or_none():
             break
         suffix += 1
@@ -983,7 +1004,9 @@ async def rotate_public_token(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     normalized_slug = _normalize_slug(slug)
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
+    result = await db.execute(
+        select(Wishlist).where(func.lower(Wishlist.slug) == normalized_slug.lower())
+    )
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -1004,7 +1027,9 @@ async def get_wishlist_by_slug(
 ) -> WishlistPublic:
     start_time = perf_counter()
     normalized_slug = _normalize_slug(slug)
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
+    result = await db.execute(
+        select(Wishlist).where(func.lower(Wishlist.slug) == normalized_slug.lower())
+    )
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -1093,7 +1118,9 @@ async def add_gift_to_wishlist(
     current_user: User = Depends(get_current_user),
 ) -> GiftPublic:
     normalized_slug = _normalize_slug(slug)
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
+    result = await db.execute(
+        select(Wishlist).where(func.lower(Wishlist.slug) == normalized_slug.lower())
+    )
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
