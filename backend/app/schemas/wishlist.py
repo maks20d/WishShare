@@ -110,6 +110,7 @@ class GiftPublic(BaseModel):
     url: str | None
     price: float | None
     image_url: str | None
+    image_thumb_url: str | None = None
     is_collective: bool
     is_private: bool
     created_at: datetime

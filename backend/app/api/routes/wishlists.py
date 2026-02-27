@@ -3,12 +3,15 @@ from typing import Annotated, Any
 from time import perf_counter
 import asyncio
 import logging
+import random
 import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError, OperationalError
 from uuid import uuid4
 
 from app.api.deps import DbSessionDep, get_current_user, get_optional_user
@@ -67,6 +70,31 @@ def _record_list(duration_ms: float, cached: bool, error: bool) -> None:
 def _record_item(duration_ms: float, cached: bool, error: bool) -> None:
     if wishlist_metrics:
         wishlist_metrics.record_item(duration_ms, cached, error)
+
+def _chunked_ints(values: list[int], chunk_size: int = 500) -> list[list[int]]:
+    if not values:
+        return []
+    return [values[i : i + chunk_size] for i in range(0, len(values), chunk_size)]
+
+def _thumb_url(image_url: str | None) -> str | None:
+    if not image_url:
+        return None
+
+    media_prefix = settings.media_path.rstrip("/") + "/gifts/"
+    parsed = urlparse(image_url)
+    path = parsed.path or ""
+
+    if path.startswith(media_prefix) and not path.endswith("_thumb.webp"):
+        filename = path.rsplit("/", 1)[-1]
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        return settings.backend_url.rstrip("/") + settings.media_path.rstrip("/") + f"/gifts/{stem}_thumb.webp"
+
+    if image_url.startswith(media_prefix) and not image_url.endswith("_thumb.webp"):
+        filename = image_url.rsplit("/", 1)[-1]
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        return settings.backend_url.rstrip("/") + settings.media_path.rstrip("/") + f"/gifts/{stem}_thumb.webp"
+
+    return None
 
 
 async def _get_cached_list(user_id: int, limit: int, offset: int):
@@ -195,6 +223,7 @@ def _serialize_gift(
             url=gift.url,
             price=float(gift.price) if gift.price is not None else None,
             image_url=gift.image_url,
+            image_thumb_url=_thumb_url(gift.image_url),
             is_collective=gift.is_collective,
             is_private=gift.is_private,
             created_at=gift.created_at,
@@ -248,6 +277,7 @@ def _serialize_gift(
         url=gift.url,
         price=float(gift.price) if gift.price is not None else None,
         image_url=gift.image_url,
+        image_thumb_url=_thumb_url(gift.image_url),
         is_collective=gift.is_collective,
         is_private=gift.is_private,
         created_at=gift.created_at,
@@ -459,15 +489,17 @@ async def _load_wishlist_with_gifts(
     contributions_map: dict[int, float] = {}
     step_start = perf_counter()
     if gift_ids:
-        contrib_sum_result = await db.execute(
-            select(
-                Contribution.gift_id,
-                func.coalesce(func.sum(Contribution.amount), 0),
+        for chunk in _chunked_ints(gift_ids):
+            contrib_sum_result = await db.execute(
+                select(
+                    Contribution.gift_id,
+                    func.coalesce(func.sum(Contribution.amount), 0),
+                )
+                .where(Contribution.gift_id.in_(chunk))
+                .group_by(Contribution.gift_id)
             )
-            .where(Contribution.gift_id.in_(gift_ids))
-            .group_by(Contribution.gift_id)
-        )
-        contributions_map = {row[0]: float(row[1]) for row in contrib_sum_result.all()}
+            for row in contrib_sum_result.all():
+                contributions_map[row[0]] = float(row[1])
     contrib_ms = (perf_counter() - step_start) * 1000.0
     logger.debug("batched_loader: contribution sums for %d gifts duration_ms=%.2f", len(contributions_map), contrib_ms)
 
@@ -481,8 +513,10 @@ async def _load_wishlist_with_gifts(
                 user_ids.add(c.user_id)
     user_lookup: dict[int, User] = {}
     if user_ids:
-        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
-        user_lookup = {u.id: u for u in users_result.scalars().unique()}
+        for chunk in _chunked_ints(list(user_ids)):
+            users_result = await db.execute(select(User).where(User.id.in_(chunk)))
+            for u in users_result.scalars().unique():
+                user_lookup[u.id] = u
     users_ms = (perf_counter() - step_start) * 1000.0
     logger.debug("batched_loader: users loaded=%d duration_ms=%.2f", len(user_lookup), users_ms)
 
@@ -550,21 +584,35 @@ async def _load_wishlist_with_gifts_retry(
     wishlist: Wishlist,
     viewer: User | None,
 ) -> WishlistPublic:
+    def is_retryable(exc: Exception) -> bool:
+        if isinstance(exc, (OperationalError,)):
+            return True
+        if isinstance(exc, DBAPIError) and bool(getattr(exc, "connection_invalidated", False)):
+            return True
+        message = str(exc).lower()
+        if "deadlock detected" in message:
+            return True
+        if "could not serialize access" in message:
+            return True
+        if "connection" in message and "closed" in message:
+            return True
+        return False
+
     attempts = 0
     while True:
         try:
             return await _load_wishlist_with_gifts(db, wishlist, viewer)
-        except Exception:
+        except Exception as exc:
             attempts += 1
-            if attempts >= 2:
+            if attempts >= 3 or not is_retryable(exc):
                 raise
-            await asyncio.sleep(0.05 * 2 ** (attempts - 1))
+            base = 0.05 * 2 ** (attempts - 1)
+            await asyncio.sleep(base + random.random() * 0.05)
 
 
 async def _invalidate_wishlist_cache(wishlist: Wishlist) -> None:
-    if wishlist_cache:
-        await wishlist_cache.invalidate_wishlist(wishlist.slug)
-        await wishlist_cache.invalidate_lists(wishlist.owner_id)
+    await _invalidate_wishlist(wishlist.slug)
+    await _invalidate_lists(wishlist.owner_id)
 
 
 async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User | None) -> bool:
@@ -575,6 +623,14 @@ async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User
     normalized = (viewer.email or "").strip().lower()
     if not normalized:
         return False
+    access_result = await db.execute(
+        select(WishlistAccessEmail.id)
+        .where(WishlistAccessEmail.wishlist_id == wishlist.id)
+        .where(WishlistAccessEmail.email == normalized)
+        .limit(1)
+    )
+    if access_result.scalar_one_or_none() is not None:
+        return True
     access_result = await db.execute(
         select(WishlistAccessEmail.id)
         .where(WishlistAccessEmail.wishlist_id == wishlist.id)
@@ -638,9 +694,6 @@ async def list_my_wishlists(
         duration_ms = (perf_counter() - start_time) * 1000.0
         if wishlist_metrics:
             _record_list(duration_ms, cached=False, error=True)
-        duration_ms = (perf_counter() - start_time) * 1000.0
-        if wishlist_metrics:
-            _record_list(duration_ms, cached=False, error=False)
         return []
 
     wishlist_ids = [w.id for w in wishlists]
@@ -663,26 +716,26 @@ async def list_my_wishlists(
     # ── 3. Contribution sums per gift ────────────────────────────────────────
     contributions_map: dict[int, float] = {}
     if gift_ids:
-        contrib_sum_result = await db.execute(
-            select(
-                Contribution.gift_id,
-                func.coalesce(func.sum(Contribution.amount), 0),
+        for chunk in _chunked_ints(gift_ids):
+            contrib_sum_result = await db.execute(
+                select(
+                    Contribution.gift_id,
+                    func.coalesce(func.sum(Contribution.amount), 0),
+                )
+                .where(Contribution.gift_id.in_(chunk))
+                .group_by(Contribution.gift_id)
             )
-            .where(Contribution.gift_id.in_(gift_ids))
-            .group_by(Contribution.gift_id)
-        )
-        contributions_map = {row[0]: float(row[1]) for row in contrib_sum_result.all()}
+            for row in contrib_sum_result.all():
+                contributions_map[row[0]] = float(row[1])
 
     # ── 4. Reservations ──────────────────────────────────────────────────────
     reservation_map: dict[int, Reservation] = {}  # gift_id → Reservation
     if gift_ids:
-        res_result = await db.execute(
-            select(Reservation).where(Reservation.gift_id.in_(gift_ids))
-        )
-        for rsv in res_result.scalars().unique():
-            reservation_map[rsv.gift_id] = rsv
+        for chunk in _chunked_ints(gift_ids):
+            res_result = await db.execute(select(Reservation).where(Reservation.gift_id.in_(chunk)))
+            for rsv in res_result.scalars().unique():
+                reservation_map[rsv.gift_id] = rsv
 
-    contrib_by_gift: dict[int, list[Contribution]] = {gid: [] for gid in gift_ids}
     user_lookup: dict[int, User] = {}
 
     access_emails_by_wl: dict[int, list[str]] = {wid: [] for wid in wishlist_ids}
@@ -757,7 +810,7 @@ async def list_my_wishlists(
         current_user.id,
         limit,
         offset,
-        [wishlist.model_dump() for wishlist in result_list],
+        [wishlist.model_dump(mode="json") for wishlist in result_list],
     )
     duration_ms = (perf_counter() - start_time) * 1000.0
     _record_list(duration_ms, cached=False, error=False)
@@ -901,7 +954,7 @@ async def get_wishlist_by_token(
                 logger.warning("get_wishlist_by_token slow cache token=%s duration_ms=%.2f", token, duration_ms)
             return WishlistPublic.model_validate(cached)
         result = await _load_wishlist_with_gifts_retry(db, wishlist, None)
-        await _set_cached_item(wishlist.slug, "public", result.model_dump())
+        await _set_cached_item(wishlist.slug, "public", result.model_dump(mode="json"))
         duration_ms = (perf_counter() - start_time) * 1000.0
         _record_item(duration_ms, cached=False, error=False)
         if duration_ms >= settings.wishlist_slow_ms:
@@ -958,7 +1011,7 @@ async def get_wishlist_by_slug(
                     logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
                 return WishlistPublic.model_validate(cached)
             result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-            await _set_cached_item(wishlist.slug, role, result.model_dump())
+            await _set_cached_item(wishlist.slug, role, result.model_dump(mode="json"))
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=False, error=False)
             if duration_ms >= settings.wishlist_slow_ms:
@@ -986,7 +1039,7 @@ async def get_wishlist_by_slug(
                     logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
                 return WishlistPublic.model_validate(cached)
             result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-            await _set_cached_item(wishlist.slug, "friend", result.model_dump())
+            await _set_cached_item(wishlist.slug, "friend", result.model_dump(mode="json"))
             duration_ms = (perf_counter() - start_time) * 1000.0
             _record_item(duration_ms, cached=False, error=False)
             if duration_ms >= settings.wishlist_slow_ms:
@@ -1008,7 +1061,7 @@ async def get_wishlist_by_slug(
                 logger.warning("get_wishlist_by_slug slow cache slug=%s duration_ms=%.2f", slug, duration_ms)
             return WishlistPublic.model_validate(cached)
         result = await _load_wishlist_with_gifts_retry(db, wishlist, viewer)
-        await _set_cached_item(wishlist.slug, role, result.model_dump())
+        await _set_cached_item(wishlist.slug, role, result.model_dump(mode="json"))
         duration_ms = (perf_counter() - start_time) * 1000.0
         _record_item(duration_ms, cached=False, error=False)
         if duration_ms >= settings.wishlist_slow_ms:

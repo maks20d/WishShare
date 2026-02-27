@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Database: sqlite+aiosqlite:///./wishshare.db (dev) | postgresql+asyncpg://... (prod)
     postgres_dsn: str = "sqlite+aiosqlite:///./wishshare.db"
     redis_dsn: str = "redis://localhost:6379/0"
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_recycle: int = 300
+    db_pool_timeout: int = 30
 
     access_token_expire_minutes: int = 60 * 24 * 7
     refresh_token_expire_minutes: int = 60 * 24 * 30
@@ -72,11 +76,17 @@ class Settings(BaseSettings):
     parser_browser_timeout_ms: int = 45000
     log_level: str = "INFO"
     log_file: str = ""
+    request_log_slow_ms: int = 800
     wishlist_cache_enabled: bool = True
     wishlist_cache_ttl_public: int = 60
     wishlist_cache_ttl_private: int = 20
     wishlist_cache_ttl_list: int = 15
     wishlist_slow_ms: int = 800
+
+    media_root: str = "uploads"
+    media_path: str = "/media"
+    image_upload_max_mb: int = 5
+    image_thumb_size: int = 320
 
     sentry_dsn: str | None = None
 

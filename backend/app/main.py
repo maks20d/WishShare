@@ -13,12 +13,14 @@ from uuid import uuid4
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.engine import make_url
 
-from app.api.routes import auth, og, wishlists, ws
+from app.api.routes import auth, og, wishlists, ws, uploads
 from app.core.config import settings
+from app.core.media import ensure_media_dirs, get_media_root
 
 try:
     from app.core.wishlist_cache import wishlist_cache
@@ -60,6 +62,9 @@ app = FastAPI(
     description="Социальный вишлист с realtime",
     version="0.1.0",
 )
+
+ensure_media_dirs()
+app.mount(settings.media_path, StaticFiles(directory=str(get_media_root())), name="media")
 
 metrics = {
     "requests_total": 0,
@@ -131,14 +136,39 @@ async def tracing_middleware(request: Request, call_next):
     path_metrics = metrics["by_path"][request.url.path]
     path_metrics["count"] += 1
     path_metrics["latency_total_ms"] += duration_ms
-    logger.info(
-        "Request completed id=%s method=%s path=%s status=%s duration_ms=%.2f",
-        request_id,
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-    )
+    is_server_error = response.status_code >= 500
+    if is_server_error:
+        metrics["errors_total"] += 1
+        path_metrics["errors"] += 1
+
+    slow_ms = getattr(settings, "request_log_slow_ms", settings.wishlist_slow_ms)
+    if is_server_error:
+        logger.error(
+            "Request completed id=%s method=%s path=%s status=%s duration_ms=%.2f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    elif response.status_code >= 400 or duration_ms >= slow_ms:
+        logger.warning(
+            "Request completed id=%s method=%s path=%s status=%s duration_ms=%.2f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    else:
+        logger.debug(
+            "Request completed id=%s method=%s path=%s status=%s duration_ms=%.2f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
     response.headers["X-Request-Id"] = request_id
     return response
 
@@ -261,21 +291,30 @@ async def on_startup() -> None:
         except Exception:
             logger.warning("Failed to backfill public_token values", exc_info=True)
 
-        # gifts: add unavailability columns (best-effort)
-        try:
-            await conn.exec_driver_sql(
-                "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT 0"
-            )
-            logger.info("Added is_unavailable column to gifts table")
-        except Exception as e:
-            logger.warning(f"Failed to add is_unavailable column: {e}")
-        try:
-            await conn.exec_driver_sql(
-                "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS unavailable_reason VARCHAR(255)"
-            )
-            logger.info("Added unavailable_reason column to gifts table")
-        except Exception as e:
-            logger.warning(f"Failed to add unavailable_reason column: {e}")
+        if is_sqlite:
+            try:
+                result = await conn.exec_driver_sql("PRAGMA table_info(gifts)")
+                columns = {row[1] for row in result.fetchall()}
+                if "is_unavailable" not in columns:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE gifts ADD COLUMN is_unavailable BOOLEAN DEFAULT 0"
+                    )
+                if "unavailable_reason" not in columns:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE gifts ADD COLUMN unavailable_reason VARCHAR(255)"
+                    )
+            except Exception:
+                logger.warning("Failed to ensure gifts unavailability columns", exc_info=True)
+        else:
+            try:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT FALSE"
+                )
+                await conn.exec_driver_sql(
+                    "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS unavailable_reason VARCHAR(255)"
+                )
+            except Exception:
+                logger.warning("Failed to ensure gifts unavailability columns", exc_info=True)
 
         # archive table (best-effort)
         try:
@@ -344,6 +383,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(auth.router)
+app.include_router(uploads.router)
 app.include_router(wishlists.router)
 app.include_router(wishlists.compat_router)
 app.include_router(ws.router)
@@ -444,6 +484,68 @@ async def get_metrics() -> dict[str, object]:
         "wishlist_metrics": wishlist_metrics_data,
         "wishlist_cache": wishlist_cache_stats,
     }
+
+
+@app.get("/metrics/alerts")
+async def get_alerts() -> dict[str, object]:
+    total = int(metrics.get("requests_total") or 0)
+    errors = int(metrics.get("errors_total") or 0)
+    alerts: list[dict[str, object]] = []
+
+    if total >= 50:
+        error_rate = errors / total if total else 0.0
+        if error_rate >= 0.05:
+            alerts.append(
+                {
+                    "id": "high_error_rate",
+                    "severity": "critical" if error_rate >= 0.15 else "warning",
+                    "value": round(error_rate, 4),
+                    "threshold": 0.05,
+                }
+            )
+
+    slow_ms = getattr(settings, "request_log_slow_ms", settings.wishlist_slow_ms)
+    for path, data in metrics["by_path"].items():
+        count = int(data.get("count") or 0)
+        path_errors = int(data.get("errors") or 0)
+        latency_total_ms = float(data.get("latency_total_ms") or 0.0)
+        if count < 20:
+            continue
+        avg_ms = latency_total_ms / count if count else 0.0
+        error_rate = path_errors / count if count else 0.0
+        if error_rate >= 0.1:
+            alerts.append(
+                {
+                    "id": "path_error_rate",
+                    "severity": "warning" if error_rate < 0.25 else "critical",
+                    "path": path,
+                    "value": round(error_rate, 4),
+                    "threshold": 0.1,
+                }
+            )
+        if avg_ms >= slow_ms * 2:
+            alerts.append(
+                {
+                    "id": "path_slow",
+                    "severity": "warning",
+                    "path": path,
+                    "avg_ms": round(avg_ms, 2),
+                    "threshold_ms": slow_ms * 2,
+                }
+            )
+
+    if wishlist_cache and settings.wishlist_cache_enabled:
+        cache_ok = await wishlist_cache.ping()
+        if not cache_ok:
+            alerts.append(
+                {
+                    "id": "cache_down",
+                    "severity": "warning",
+                    "value": False,
+                }
+            )
+
+    return {"alerts": alerts, "requests_total": total, "errors_total": errors}
 
 
 @app.post("/metrics/web-vitals")

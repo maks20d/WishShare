@@ -1,12 +1,14 @@
 import pytest
 import os
 import warnings
+import shutil
 from sqlalchemy import create_engine
 
 # Set environment variables BEFORE importing app modules
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["POSTGRES_DSN"] = "sqlite+aiosqlite:///file:wishshare_tests?mode=memory&cache=shared&uri=true"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-32-chars-minimum!!"
+os.environ["MEDIA_ROOT"] = "uploads-test"
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -23,6 +25,12 @@ def pytest_configure(config):
 
 def pytest_sessionstart(session):
     warnings.simplefilter("ignore", DeprecationWarning)
+
+def pytest_sessionfinish(session, exitstatus):
+    try:
+        shutil.rmtree(os.path.join(os.path.dirname(__file__), "..", "uploads-test"), ignore_errors=True)
+    except Exception:
+        pass
 
 
 
