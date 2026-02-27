@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     wishlist_cache_ttl_list: int = 15
     wishlist_slow_ms: int = 800
 
-    media_root: str = "uploads"
+    media_root: str = "/opt/render/project/src/uploads"
     media_path: str = "/media"
     image_upload_max_mb: int = 5
     image_thumb_size: int = 320
