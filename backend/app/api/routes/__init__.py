@@ -1,3 +1,3 @@
-from . import auth, og, wishlists, ws
+from . import auth, og, uploads, wishlists, ws
 
-__all__ = ["auth", "wishlists", "ws", "og"]
+__all__ = ["auth", "wishlists", "ws", "og", "uploads"]

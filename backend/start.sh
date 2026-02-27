@@ -8,4 +8,5 @@ else
   echo "Alembic config not found; skipping migrations."
 fi
 echo "Starting application..."
-exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+WORKERS="${WEB_CONCURRENCY:-1}"
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers "${WORKERS}"
