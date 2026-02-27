@@ -31,6 +31,7 @@ export default function GiftCard({
   const userContribution = gift.contributions.find((c) => c.user_id === user?.id);
   const canCancelContribution = !actionsDisabled && !!userContribution && !gift.is_fully_collected;
   const reservationLabel = gift.reservation?.user_name || gift.reservation?.user_email || "друг";
+  const imageSrc = gift.image_thumb_url || gift.image_url;
 
   const handleReserve = async () => {
     try { await api.post(`/gifts/${gift.id}/reserve`); onRefetch(); }
@@ -56,9 +57,9 @@ export default function GiftCard({
 
   return (
     <article className="surface-panel p-5 md:p-6 space-y-4">
-      {gift.image_url && (
+      {imageSrc && (
         <div className="h-40 rounded-xl overflow-hidden border border-[var(--line)] bg-slate-900/40 relative">
-          <Image src={gift.image_url} alt={gift.title} fill sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" unoptimized />
+          <Image src={imageSrc} alt={gift.title} fill sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" unoptimized />
         </div>
       )}
 

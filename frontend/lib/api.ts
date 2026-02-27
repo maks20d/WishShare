@@ -328,6 +328,113 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   throw lastError ?? new Error("Unknown API error");
 }
 
+async function requestForm<T>(
+  path: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  const method = options.method ?? "POST";
+  let attempt = 0;
+  let lastError: ApiError | null = null;
+  let refreshed = false;
+
+  while (attempt <= MAX_RETRIES) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        ...options,
+        headers: {
+          ...(options.headers || {})
+        },
+        credentials: "include"
+      });
+
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        let responseBody: unknown = undefined;
+        try {
+          responseBody = await res.clone().json();
+          if (responseBody && typeof responseBody === "object" && "detail" in responseBody) {
+            const detail = (responseBody as { detail?: unknown }).detail;
+            const extracted = extractDetailMessage(detail);
+            if (extracted) {
+              message = extracted;
+            }
+          }
+        } catch {
+          try {
+            responseBody = await res.clone().text();
+            if (typeof responseBody === "string" && responseBody.trim().length > 0) {
+              message = responseBody;
+            }
+          } catch {
+            responseBody = undefined;
+          }
+        }
+
+        if (res.status === 401 && !refreshed && shouldAttemptRefresh(path)) {
+          const refreshOk = await refreshAccessToken();
+          if (refreshOk) {
+            refreshed = true;
+            continue;
+          }
+          handleUnauthorizedRedirect();
+        }
+
+        const error: ApiError = new Error(message);
+        error.status = res.status;
+        error.url = url;
+        error.method = method;
+        error.responseBody = redactSensitive(responseBody);
+        if (res.status === 401) error.code = "UNAUTHORIZED";
+        else if (res.status === 403) error.code = "FORBIDDEN";
+        else if (res.status >= 500) error.code = "SERVER_ERROR";
+
+        if (res.status === 401) {
+        } else if (res.status === 404 && method === "GET") {
+          logger.info("API request not found", { url, method, status: res.status });
+        } else if (res.status >= 500) {
+          logger.error("API request server error", { url, method, status: res.status, message });
+        } else {
+          logger.warn("API request failed", { url, method, status: res.status, message });
+        }
+
+        if (attempt < MAX_RETRIES) {
+          lastError = error;
+          attempt += 1;
+          await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+          continue;
+        }
+
+        throw error;
+      }
+
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        return (await res.json()) as T;
+      }
+      return (await res.text()) as unknown as T;
+    } catch (err) {
+      const error: ApiError = err instanceof Error ? err : new Error("Network error");
+      if (!error.code) {
+        error.code = "NETWORK_ERROR";
+      }
+      error.url = url;
+      error.method = method;
+      lastError = error;
+
+      if (attempt < MAX_RETRIES) {
+        attempt += 1;
+        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError ?? new Error("Unknown API error");
+}
+
 function safeJsonParse(payload: BodyInit): unknown {
   if (typeof payload !== "string") return payload;
   try {
@@ -352,5 +459,10 @@ export const api = {
   delete: <T>(path: string) =>
     request<T>(path, {
       method: "DELETE"
+    }),
+  postForm: <T>(path: string, body: FormData) =>
+    requestForm<T>(path, {
+      method: "POST",
+      body
     })
 };

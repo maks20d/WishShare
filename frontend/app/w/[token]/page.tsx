@@ -12,6 +12,7 @@ type Gift = {
   url: string | null;
   price: number | null;
   image_url: string | null;
+  image_thumb_url?: string | null;
   is_collective: boolean;
   is_private: boolean;
   created_at: string;
@@ -91,12 +92,13 @@ export default function PublicWishlistPage() {
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.gifts.map((g) => {
           const unavailable = !!g.is_unavailable;
+          const imageSrc = g.image_thumb_url || g.image_url;
           return (
             <article key={g.id} className={`surface-panel p-4 space-y-3 ${unavailable ? "opacity-70" : ""}`}>
-              {g.image_url ? (
+              {imageSrc ? (
                 <div className="relative w-full h-48 bg-[var(--surface)] rounded">
                   <Image
-                    src={g.image_url}
+                    src={imageSrc}
                     alt={g.title}
                     fill
                     sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"

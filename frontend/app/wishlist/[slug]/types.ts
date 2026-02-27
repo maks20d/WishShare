@@ -19,6 +19,7 @@ export type Gift = {
   url?: string | null;
   price?: number | null;
   image_url?: string | null;
+  image_thumb_url?: string | null;
   is_collective: boolean;
   is_private: boolean;
   is_reserved: boolean;
