@@ -1,4 +1,5 @@
 import io
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from app.core.config import settings
 from app.core.media import build_media_url, ensure_media_dirs, get_media_root
 from app.models.models import User
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -84,10 +87,25 @@ async def upload_image(
     current_user: User = Depends(get_current_user),
 ) -> UploadImageResponse:
     _ = current_user
-    ensure_media_dirs()
+    try:
+        ensure_media_dirs()
+    except Exception as e:
+        logger.error(f"Failed to create media dirs: {e}")
+        raise HTTPException(status_code=500, detail="Не удалось создать директорию для загрузки")
 
-    data = await file.read(int(settings.image_upload_max_mb) * 1024 * 1024 + 1)
-    ext, img = _validate_upload(file, data)
+    try:
+        data = await file.read(int(settings.image_upload_max_mb) * 1024 * 1024 + 1)
+    except Exception as e:
+        logger.error(f"Failed to read file: {e}")
+        raise HTTPException(status_code=400, detail="Не удалось прочитать файл")
+    
+    try:
+        ext, img = _validate_upload(file, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to validate image: {e}")
+        raise HTTPException(status_code=400, detail="Неверный формат изображения")
 
     media_root = get_media_root() / "gifts"
     image_id = uuid4().hex
@@ -97,17 +115,25 @@ async def upload_image(
     original_path = media_root / original_name
     thumb_path = media_root / thumb_name
 
-    _save_bytes(original_path, data)
+    try:
+        _save_bytes(original_path, data)
+    except Exception as e:
+        logger.error(f"Failed to save original: {e}")
+        raise HTTPException(status_code=500, detail="Не удалось сохранить изображение")
 
-    img_for_thumb = img.convert("RGB") if img.mode not in {"RGB", "RGBA"} else img
-    if img_for_thumb.mode == "RGBA":
-        background = Image.new("RGB", img_for_thumb.size, (255, 255, 255))
-        background.paste(img_for_thumb, mask=img_for_thumb.split()[-1])
-        img_for_thumb = background
+    try:
+        img_for_thumb = img.convert("RGB") if img.mode not in {"RGB", "RGBA"} else img
+        if img_for_thumb.mode == "RGBA":
+            background = Image.new("RGB", img_for_thumb.size, (255, 255, 255))
+            background.paste(img_for_thumb, mask=img_for_thumb.split()[-1])
+            img_for_thumb = background
 
-    thumb = img_for_thumb.copy()
-    thumb.thumbnail((int(settings.image_thumb_size), int(settings.image_thumb_size)))
-    thumb.save(thumb_path, format="WEBP", quality=82, method=6)
+        thumb = img_for_thumb.copy()
+        thumb.thumbnail((int(settings.image_thumb_size), int(settings.image_thumb_size)))
+        thumb.save(thumb_path, format="WEBP", quality=82, method=6)
+    except Exception as e:
+        logger.error(f"Failed to create thumbnail: {e}")
+        # Continue without thumbnail - original still saved
 
     url = build_media_url(f"gifts/{original_name}")
     thumb_url = build_media_url(f"gifts/{thumb_name}")
