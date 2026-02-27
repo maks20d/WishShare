@@ -5,6 +5,7 @@ import asyncio
 import logging
 import random
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
@@ -641,10 +642,16 @@ async def _has_friends_access(db: AsyncSession, wishlist: Wishlist, viewer: User
 
 
 def _slugify(title: str) -> str:
-    slug = title.strip().lower()
+    # Normalize unicode (NFC) and convert to lowercase
+    slug = unicodedata.normalize("NFC", title.strip().lower())
     slug = re.sub(r"[^a-z0-9а-яё]+", "-", slug)
     slug = re.sub(r"-+", "-", slug).strip("-")
     return slug or "wishlist"
+
+
+def _normalize_slug(slug: str) -> str:
+    """Normalize slug for consistent matching - handle unicode edge cases."""
+    return unicodedata.normalize("NFC", slug)
 
 
 @router.get("", response_model=list[WishlistPublic])
@@ -827,8 +834,8 @@ async def update_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> WishlistPublic:
-    
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    normalized_slug = _normalize_slug(slug)
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -871,7 +878,8 @@ async def delete_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> None:
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    normalized_slug = _normalize_slug(slug)
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -892,14 +900,15 @@ async def create_wishlist(
 ) -> WishlistPublic:
     
     base_slug = _slugify(payload.title)
-    slug = base_slug
+    normalized_base = _normalize_slug(base_slug)
+    slug = normalized_base
     suffix = 1
     while True:
         existing = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
         if not existing.scalar_one_or_none():
             break
         suffix += 1
-        slug = f"{base_slug}-{suffix}"
+        slug = f"{normalized_base}-{suffix}"
 
     wishlist = Wishlist(
         owner_id=current_user.id,
@@ -973,7 +982,8 @@ async def rotate_public_token(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    normalized_slug = _normalize_slug(slug)
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -993,7 +1003,8 @@ async def get_wishlist_by_slug(
     viewer: User | None = Depends(get_optional_user),
 ) -> WishlistPublic:
     start_time = perf_counter()
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    normalized_slug = _normalize_slug(slug)
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
@@ -1081,7 +1092,8 @@ async def add_gift_to_wishlist(
     db: DbSessionDep,
     current_user: User = Depends(get_current_user),
 ) -> GiftPublic:
-    result = await db.execute(select(Wishlist).where(Wishlist.slug == slug))
+    normalized_slug = _normalize_slug(slug)
+    result = await db.execute(select(Wishlist).where(Wishlist.slug == normalized_slug))
     wishlist = result.scalar_one_or_none()
     if not wishlist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wishlist not found")
