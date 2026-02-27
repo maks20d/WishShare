@@ -263,13 +263,19 @@ async def on_startup() -> None:
 
         # gifts: add unavailability columns (best-effort)
         try:
-            await conn.exec_driver_sql("ALTER TABLE gifts ADD COLUMN is_unavailable BOOLEAN DEFAULT 0")
-        except Exception:
-            pass
+            await conn.exec_driver_sql(
+                "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT 0"
+            )
+            logger.info("Added is_unavailable column to gifts table")
+        except Exception as e:
+            logger.warning(f"Failed to add is_unavailable column: {e}")
         try:
-            await conn.exec_driver_sql("ALTER TABLE gifts ADD COLUMN unavailable_reason VARCHAR(255)")
-        except Exception:
-            pass
+            await conn.exec_driver_sql(
+                "ALTER TABLE gifts ADD COLUMN IF NOT EXISTS unavailable_reason VARCHAR(255)"
+            )
+            logger.info("Added unavailable_reason column to gifts table")
+        except Exception as e:
+            logger.warning(f"Failed to add unavailable_reason column: {e}")
 
         # archive table (best-effort)
         try:
